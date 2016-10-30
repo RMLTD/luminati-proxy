@@ -738,7 +738,7 @@ function proxies($scope, $http, $proxies, $window){
         $scope.page = p;
     };
     $scope.columns = opt_columns.filter(function(col){
-        return ['port', 'zone', 'country', 'max_requests', 'sticky_ip']
+        return ['port', 'zone', 'country', 'city', 'asn', 'dns', 'pool_size', 'sticky_ip', 'max_requests']
         .indexOf(col.key)!=-1;
     });
     $proxies.subscribe(function(proxies){
