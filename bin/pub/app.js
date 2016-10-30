@@ -62,7 +62,6 @@ function $proxies($http, $q){
                     },
                     ticks: [],
                 };
-                proxy.country = proxy.country.toUpperCase();
                 proxy.config = config_index[proxy.port];
                 var data = _.values(proxy._stats);
                 proxy.total_stats = {
