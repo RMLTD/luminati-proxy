@@ -21,21 +21,11 @@
 
               <span ng-if="col.key=='port'&&proxy.iface=='0.0.0.0'
                 &&proxy.config.iface&&proxy.config.iface!=='0.0.0.0'">
-                <span title="{{'This proxy has been binded to all network '
-                  +'interfaces since '+proxy.config.iface+' is not available '
-                  +'for binding'}}"
-                  class="proxies-warning glyphicon glyphicon-exclamation-sign">
+                <span class="proxies-warning glyphicon glyphicon-exclamation-sign">
                 </span>
               </span>
 
-              <span title="{{proxy[col.key]&&proxy[col.key]!==proxy.config[col.key]
-                ? (proxy.persist ? 'Set non-default value' :
-                'This proxy\'s settings cannot be changed')
-                : (proxy.persist ? 'Change value' :
-                'This proxy\'s settings cannot be changed')}}"
-                ng-class="{'proxies-default':
-                proxy[col.key]&&proxy[col.key]!==proxy.config[col.key],
-                'proxies-editable': proxy.persist}">
+              <span>
 
                 <span ng-if=proxy[col.key]===true class="glyphicon glyphicon-ok"></span>
 

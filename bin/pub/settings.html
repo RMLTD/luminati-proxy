@@ -27,6 +27,7 @@
     </button>
   </div>
   -->
+  <!--
   <div ng-if=$parent.$parent.settings.argv class="alert alert-info">
     The application is running with the following arguments:
     <strong>
@@ -34,14 +35,13 @@
         <span ng-if=!($index%2)||args_password>
           {{p}}
         </span>
-        <!--
         <span ng-if=$index%2&&!args_password>
           <a ng-click=show_password() href=#>(show)</a>
         </span>
-        -->
       </span>
     </strong>
   </div>
+  -->
   <!--
   <div ng-if=$parent.ver_node&&!$parent.ver_node.satisfied class="alert
     alert-warning settings-alert">
@@ -57,6 +57,7 @@
     </div>
   </div>
   -->
+  <!--
   <div
     ng-if=$parent.ver_cur&&$parent.ver_last&&$parent.ver_cur!=$parent.ver_last
     class="alert alert-warning settings-alert">
@@ -82,6 +83,7 @@
       Error
     </div>
   </div>
+  -->
   <!--
   <div
     ng-if=$parent.ver_cur&&$parent.ver_last&&$parent.ver_cur==$parent.ver_last
@@ -129,6 +131,7 @@
     </button>
     -->
   </div>
+  <!--
   <div class="alert alert-warning settings-alert" ng-if=resolve_missing>
     SOCKs is in use without IP resolution - HTTPS requests will not be served
     from the proxy peer.
@@ -145,6 +148,7 @@
       Edit
     </button>
   </div>
+  -->
   <div id=config class="modal fade" role=dialog>
     <div class=modal-dialog>
       <div class=modal-content>

@@ -147,11 +147,11 @@ function root($rootScope, $scope, $http, $window){
         }});
     };
     $scope.sections = [
-        {name: 'settings', title: 'Settings'},
+        {name: 'settings', title: 'Config'},
         {name: 'proxies', title: 'Proxies'},
-        {name: 'zones', title: 'Zones'},
+        {name: 'zones', title: 'Stats'},
         {name: 'tools', title: 'Tools'},
-        {name: 'faq', title: 'FAQ'},
+        /*{name: 'faq', title: 'FAQ'},*/
     ];
     for (var s in $scope.sections)
     {
