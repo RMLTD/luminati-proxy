@@ -16,45 +16,7 @@
         </thead>
         <tbody>
           <tr ng-repeat="proxy in proxies|startFrom:(page-1)*page_size|limitTo:page_size">
-            <td class=proxies-actions>
-              <span class="proxies-action glyphicon glyphicon-pencil"
-                ng-if=proxy.persist ng-click=edit_proxy(proxy.config)
-                title=Edit>
-              </span>
-              <span class="proxies-action-disabled glyphicon glyphicon-pencil"
-                ng-if=!proxy.persist title="This proxy cannot be edited">
-              </span>
-              <span class="proxies-action glyphicon glyphicon-duplicate"
-                ng-click="edit_proxy(proxy.config, true)" title=Duplicate>
-              </span>
-              <span class="proxies-action glyphicon glyphicon-refresh"
-                ng-click="refresh_sessions(proxy)" title="Refresh sessions">
-              </span>
-              <span class="proxies-action glyphicon glyphicon-stats"
-                ng-click=show_stats(proxy) title=Statistics>
-              </span>
-              <span class="proxies-action glyphicon glyphicon-time"
-                ng-click=show_history(proxy) title=History>
-              </span>
-              <span class="proxies-action glyphicon glyphicon-list-alt"
-                ng-click=show_pool(proxy) title="Current pool">
-              </span>
-              <span class="proxies-action glyphicon glyphicon-link"
-                ng-if=proxy._iface_ips&&proxy._iface_ips.length
-                ng-click=show_iface_ips(proxy)
-                title="IPs for accessing proxy from outside localhost">
-              </span>
-              <span class="proxies-action-disabled glyphicon glyphicon-link"
-                ng-if=!proxy._iface_ips||!proxy._iface_ips.length
-                title="This proxy cannot be accessed from outside localhost">
-              </span>
-              <span class="proxies-action glyphicon glyphicon-trash"
-                ng-if=proxy.persist ng-click=delete_proxy(proxy) title=Delete>
-              </span>
-              <span class="proxies-action-disabled glyphicon glyphicon-trash"
-                ng-if=!proxy.persist title="This proxy cannot be deleted">
-              </span>
-            </td>
+            <!-- proxy details -->
             <td ng-repeat="col in columns">
               <span ng-if="col.key=='port'&&proxy.iface=='0.0.0.0'
                 &&proxy.config.iface&&proxy.config.iface!=='0.0.0.0'">
@@ -107,6 +69,50 @@
                 </span>
               </span>
             </td>
+            <!-- options -->
+            <td class=proxies-actions>
+              <!--
+              <span class="proxies-action glyphicon glyphicon-pencil"
+                ng-if=proxy.persist ng-click=edit_proxy(proxy.config)
+                title=Edit>
+              </span>
+              <span class="proxies-action-disabled glyphicon glyphicon-pencil"
+                ng-if=!proxy.persist title="This proxy cannot be edited">
+              </span>
+              <span class="proxies-action glyphicon glyphicon-duplicate"
+                ng-click="edit_proxy(proxy.config, true)" title=Duplicate>
+              </span>
+              -->
+              <span class="proxies-action glyphicon glyphicon-refresh"
+                ng-click="refresh_sessions(proxy)" title="Refresh sessions">
+              </span>
+              <span class="proxies-action glyphicon glyphicon-stats"
+                ng-click=show_stats(proxy) title=Statistics>
+              </span>
+              <span class="proxies-action glyphicon glyphicon-time"
+                ng-click=show_history(proxy) title=History>
+              </span>
+              <span class="proxies-action glyphicon glyphicon-list-alt"
+                ng-click=show_pool(proxy) title="Current pool">
+              </span>
+              <span class="proxies-action glyphicon glyphicon-link"
+                ng-if=proxy._iface_ips&&proxy._iface_ips.length
+                ng-click=show_iface_ips(proxy)
+                title="IPs for accessing proxy from outside localhost">
+              </span>
+              <span class="proxies-action-disabled glyphicon glyphicon-link"
+                ng-if=!proxy._iface_ips||!proxy._iface_ips.length
+                title="This proxy cannot be accessed from outside localhost">
+              </span>
+              <!--
+              <span class="proxies-action glyphicon glyphicon-trash"
+                ng-if=proxy.persist ng-click=delete_proxy(proxy) title=Delete>
+              </span>
+              <span class="proxies-action-disabled glyphicon glyphicon-trash"
+                ng-if=!proxy.persist title="This proxy cannot be deleted">
+              </span>
+              -->
+            </td>            
           </tr>
         </tbody>
       </table>
