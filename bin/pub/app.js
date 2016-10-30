@@ -745,6 +745,8 @@ function proxies($scope, $http, $proxies, $window){
         $scope.proxies = proxies;
         $scope.set_page($scope.page);
     });
+    /*
+    don't allow proxies to be deleted
     $scope.delete_proxy = function(proxy){
         $scope.$parent.$parent.confirmation = {
             text: 'Are you sure you want to delete the proxy?',
@@ -756,6 +758,7 @@ function proxies($scope, $http, $proxies, $window){
         };
         $window.$('#confirmation').modal();
     };
+    */
     $scope.refresh_sessions = function(proxy){
         $http.post('/api/refresh_sessions/'+proxy.port).then(function(){
             $proxies.update();
@@ -832,9 +835,14 @@ function proxies($scope, $http, $proxies, $window){
     $scope.show_iface_ips = function(proxy){
         $scope.iface_ips_dialog = [{port: proxy.port, ips: proxy._iface_ips}];
     };
+    /*
+    no edit
     $scope.edit_proxy = function(proxy, duplicate){
         $scope.proxy_dialog = [{proxy: proxy||{}, duplicate: duplicate}];
     };
+    */
+    /*
+    no inline edit
     $scope.inline_edit_click = function(proxy, col){
         if (!proxy.persist)
             return;
@@ -894,6 +902,7 @@ function proxies($scope, $http, $proxies, $window){
     $scope.inline_edit_blur = function(proxy){
         proxy.edited_field = '';
     };
+    */
     $scope.reset_total_stats = function(proxy){
         $http.put('/api/proxies/'+proxy.port, {reset_total_stats: true});
     };

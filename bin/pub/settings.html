@@ -1,4 +1,5 @@
 <div ng-controller=settings>
+  <!--
   <div ng-if=!status class="alert alert-info settings-alert">
     <div>
       Determining the status of your proxy...
@@ -8,6 +9,8 @@
       Shut down
     </button>
   </div>
+  -->
+  <!--
   <div ng-if=status class="alert settings-alert" ng-class="{'alert-success':
     status.status=='ok', 'alert-danger': status.status=='error'}">
     <div>
@@ -23,6 +26,7 @@
       Shut down
     </button>
   </div>
+  -->
   <div ng-if=$parent.$parent.settings.argv class="alert alert-info">
     The application is running with the following arguments:
     <strong>
@@ -30,12 +34,15 @@
         <span ng-if=!($index%2)||args_password>
           {{p}}
         </span>
+        <!--
         <span ng-if=$index%2&&!args_password>
           <a ng-click=show_password() href=#>(show)</a>
         </span>
+        -->
       </span>
     </strong>
   </div>
+  <!--
   <div ng-if=$parent.ver_node&&!$parent.ver_node.satisfied class="alert
     alert-warning settings-alert">
     <div>
@@ -49,6 +56,7 @@
       download a newer version.
     </div>
   </div>
+  -->
   <div
     ng-if=$parent.ver_cur&&$parent.ver_last&&$parent.ver_cur!=$parent.ver_last
     class="alert alert-warning settings-alert">
@@ -74,12 +82,15 @@
       Error
     </div>
   </div>
+  <!--
   <div
     ng-if=$parent.ver_cur&&$parent.ver_last&&$parent.ver_cur==$parent.ver_last
     class="alert alert-success">
     You are using the latest version of the Luminati proxy manager tool
     (<strong>{{$parent.ver_cur}}</strong>).
   </div>
+  -->
+  <!--
   <form name=settings ng-submit=save()>
     <div class=block>
       <div class=form-group>
@@ -106,14 +117,17 @@
       </div>
     </div>
   </form>
+  -->
   <div class="alert alert-info settings-alert" ng-if=$parent.settings.config>
     <div>
       Path to the configuration file:
       <strong>{{$parent.$parent.settings.config}}</strong>
     </div>
+    <!--
     <button type=button class="btn btn-warning" ng-click=edit_config()>
       Edit
     </button>
+    -->
   </div>
   <div class="alert alert-warning settings-alert" ng-if=resolve_missing>
     SOCKs is in use without IP resolution - HTTPS requests will not be served
