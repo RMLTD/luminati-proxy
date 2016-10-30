@@ -62,6 +62,7 @@ function $proxies($http, $q){
                     },
                     ticks: [],
                 };
+                proxy.country = proxy.country.toUpperCase();
                 proxy.config = config_index[proxy.port];
                 var data = _.values(proxy._stats);
                 proxy.total_stats = {
@@ -738,7 +739,7 @@ function proxies($scope, $http, $proxies, $window){
         $scope.page = p;
     };
     $scope.columns = opt_columns.filter(function(col){
-        return ['port', 'zone', 'country', 'city', 'asn', 'dns', 'pool_size', 'sticky_ip', 'max_requests']
+        return ['port', 'country', 'asn', 'city', 'dns', 'pool_size', 'sticky_ip', 'max_requests']
         .indexOf(col.key)!=-1;
     });
     $proxies.subscribe(function(proxies){

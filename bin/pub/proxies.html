@@ -28,8 +28,7 @@
                 </span>
               </span>
 
-              <span ng-click="inline_edit_click(proxy, col)"
-                title="{{proxy[col.key]&&proxy[col.key]!==proxy.config[col.key]
+              <span title="{{proxy[col.key]&&proxy[col.key]!==proxy.config[col.key]
                 ? (proxy.persist ? 'Set non-default value' :
                 'This proxy\'s settings cannot be changed')
                 : (proxy.persist ? 'Change value' :
