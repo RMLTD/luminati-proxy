@@ -728,7 +728,7 @@ function proxies($scope, $http, $proxies, $window){
         {key: 'log', title: 'Log Level'},
         {key: 'debug', title: 'Luminati debug'},
     ];
-    $scope.page_size = 50;
+    $scope.page_size = 250;
     $scope.page = 1;
     $scope.set_page = function(p){
         if (p < 1)
