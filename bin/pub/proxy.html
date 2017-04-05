@@ -2,6 +2,8 @@
   <div class=modal-dialog>
     <div class=modal-content>
       <form ng-submit=save(form)>
+        <input style="display:none;" type="text" name="dummy1">
+        <input style="display:none;" type="password" name="dummy2">
         <div class=modal-header>
           <button type=button class=close data-dismiss=modal>
             &times;
@@ -15,20 +17,80 @@
           <div class=panel-group id=proxy-tabs>
             <div class="panel panel-default">
               <div class=panel-heading>
+                <label class="control-label preset">
+                  <a data-toggle=collapse data-parent=#proxy-tabs
+                    href=#proxy-preset>Preset:</a>
+                  <select id=proxy-field-preset ng-model=form.preset
+                    class=form-control ng-change=apply_preset()
+                    ng-options="v.title for (p, v) in presets">
+                  </select>
+                </label>
+              </div>
+              <div id=proxy-preset class="panel-collapse collapse in">
+                <div class=panel-body>
+                  <div ng-if="form.preset.key=='session_long'">
+                    All requests share the same long session (IP)
+                    <br>
+                    For connecting a browser to Luminati, maintaining the same
+                    IP for as long as possible
+                  </div>
+                  <div ng-if="form.preset.key=='session'">
+                    All requests share the same active session (IP)
+                    <br>
+                    For connecting a single app/browser that does not need to
+                    maintain IP on idle times
+                  </div>
+                  <div ng-if="form.preset.key=='sticky_ip'">
+                    Each requesting machine will have its own session (IP)
+                    <br>
+                    For connecting several computers to a single Luminati
+                    Proxy Manager, each of them having its own single session
+                    (IP)
+                  </div>
+                  <div ng-if="form.preset.key=='sequential'">
+                    Sequential pool of pre-established of sessions (IPs)
+                    <br>
+                    For running groups of requests sharing the same IP to
+                    a target site
+                    <br>
+                    Use refresh_sessions max_requests & session_duration to
+                    control session (IP) switching
+                  </div>
+                  <div ng-if="form.preset.key=='round_robin'">
+                    Round-robin pool of pre-established sessions (IPs)
+                    <br>
+                    For spreading requests across large number of IPs
+                    <br>
+                    Tweak pool_size, max_requests & proxy_count to optimize
+                    performance
+                  </div>
+                  <div ng-if="form.preset.key=='custom'">
+                    Manually adjust all settings to your needs
+                    <br>
+                    For advanced use cases
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="panel panel-default">
+              <div class=panel-heading>
                 <a data-toggle=collapse data-parent=#proxy-tabs
                   href=#proxy-general>
                   General
                 </a>
               </div>
-              <div id=proxy-general class="panel-collapse collapse in">
+              <div id=proxy-general class="panel-collapse collapse">
                 <div class=panel-body>
-                  <div class=form-group>
+                  <div class=form-group
+                    ng-class="{'has-error': form_errors.port}">
                     <label class=control-label for=proxy-field-port>
                       Port
                     </label>
                     <input id=proxy-field-port class=form-control type=number
                       ng-model=form.port
                       placeholder={{consts.port.def}} min=24000>
+                    <span ng-show=form_errors.port class="help-block">
+                      {{form_errors.port}}</span>
                   </div>
                   <div class=form-group>
                     <label class=control-label for=proxy-field-interface>
@@ -36,16 +98,47 @@
                     </label>
                     <select id=proxy-field-interface ng-model=form.iface
                       class=form-control ng-init="form.iface=form.iface||''"
-                      ng-options="v for v in consts.iface.values">
+                      ng-options="i.value as i.key for i in consts.iface.values">
                     </select>
                   </div>
                   <div class=form-group>
-                    <label class=control-label for=proxy-field-sticky-ip>
-                      {{consts.ssl.desc}}
+                    <label class=control-label for=proxy-field-multiply>
+                      Multiply
+                    </label>
+                    <input id=proxy-field-multiply class=form-control type=number
+                      ng-model=form.multiply
+                      ng-disabled=!form.preset.support.multiply
+                      placeholder={{consts.multiply.def}}>
+                  </div>
+                  <div class=form-group>
+                    <label class=control-label for=proxy-field-history>
+                      {{consts.history.desc.description}}
+                    </label>
+                    <select id=proxy-field-history class=form-control
+                      ng-model=_history ng-init="_history =
+                      form.history ? 'yes' : (form.history===undefined
+                      ||form.history==='' ? 'default' : 'no')"
+                      ng-change="binary_changed(form, 'history', _history)">
+                      <option value=no
+                        ng-selected=!form.history&&form.history!==undefined>
+                        no
+                      </option>
+                      <option value=default
+                        ng-selected="form.history===undefined||form.history===''">
+                        default ({{defaults.history ? 'yes' : 'no'}})
+                      </option>
+                      <option value=yes ng-selected=form.history>
+                        yes
+                      </option>
+                    </select>
+                  </div>
+                  <div class=form-group>
+                    <label class=control-label for=proxy-field-ssl>
+                      {{consts.ssl.desc.description}}
                     </label>
                     <select id=proxy-field-ssl class=form-control
                       ng-model=_ssl ng-init="_ssl =
-                      form.ssl ? 'yes' : (form.sticky_ip===undefined
+                      form.ssl ? 'yes' : (form.ssl===undefined
                       ||form.ssl==='' ? 'default' : 'no')"
                       ng-change="binary_changed(form, 'ssl', _ssl)">
                       <option value=no
@@ -61,32 +154,45 @@
                       </option>
                     </select>
                   </div>
-                  <div class=form-group>
+                  <div class=form-group
+                    ng-class="{'has-error': form_errors.socks}">
                     <label class=control-label for=proxy-field-socks-port>
-                      SOCKS Port
+                      SOCKS port
                     </label>
                     <input id=proxy-field-socks-port type=number
                       ng-model=form.socks placeholder={{consts.socks.def}}
                       class=form-control>
+                    <span ng-show=form_errors.socks class="help-block">
+                      {{form_errors.socks}}</span>
                   </div>
-                  <div class=form-group>
+                  <div class=form-group
+                    ng-class="{'has-error': form_errors.zone}">
                     <label class=control-label for=proxy-field-zone>
                       Zone
                     </label>
-                    <input id=proxy-field-zone ng-model=form.zone
-                      placeholder={{consts.zone.def}} class=form-control>
+                    <select id=proxy-field-zone class=form-control
+                      ng-if="consts.zone.values.length>0" ng-model=form.zone
+                      ng-options="z.value as z.key for z in consts.zone.values">
+                    </select>
+                    <input type="text" class=form-control
+                      ng-if="consts.zone.values.length==0" ng-model=form.zone>
+                    <span ng-show=form_errors.zone class="help-block">
+                      {{form_errors.zone}}</span>
                   </div>
-                  <div class=form-group>
+                  <div class=form-group ng-show="is_valid_field('password')"
+                       ng-class="{'has-error': form_errors.password}">
                     <label class=control-label
                       for=proxy-field-zone-password>
                       Zone password (if different from zone)
                     </label>
-                    <input type=password id=proxy-field-zone-password
+                    <input type=password id=proxy-field-zone-password autocomplete=off
                       ng-model=form.password class=form-control>
+                    <span ng-show=form_errors.password class="help-block">
+                      {{form_errors.password}}</span>
                   </div>
                   <div class=form-group>
                     <label class=control-label for=proxy-field-secure-proxy>
-                      {{consts.secure_proxy.desc}}
+                      {{consts.secure_proxy.desc.description}}
                     </label>
                     <select id=proxy-field-secure-proxy class=form-control
                       ng-model=_secure_proxy ng-init="_secure_proxy =
@@ -118,40 +224,51 @@
               </div>
               <div id=proxy-targeting class="panel-collapse collapse">
                 <div class=panel-body>
-                  <div class=form-group>
+                  <div class=form-group ng-show="is_valid_field('country')">
                     <label class=control-label for=proxy-field-country>
                       Country
                     </label>
                     <select id=proxy-field-country ng-model=form.country
-                      class=form-control ng-options="c.value as c.key for c in
-                      consts.country.values"
-                      ng-init="form.country=form.country||''">
+                      ng-options="c.value as c.key for c in consts.country.values"
+                      ng-change="update_regions_and_cities()"
+                      class=form-control>
                     </select>
                   </div>
-                  <div class=form-group>
+                  <div class=form-group ng-show="is_valid_field('state')">
                     <label class=control-label for=proxy-field-state>
                       State
                     </label>
-                    <input id=proxy-field-state ng-model=form.state
-                      placeholder=ny class=form-control>
+                    <select id=proxy-field-state ng-model=form.state
+                      ng-options="c.value as c.key for c in regions"
+                      ng-disabled="!regions.length"
+                      ng-change="update_cities()" class=form-control >
+                    </select>
                   </div>
-                  <div class=form-group>
+                  <div class=form-group ng-show="is_valid_field('city')">
                     <label class=control-label for=proxy-field-city>
                       City
                     </label>
                     <input id=proxy-field-city ng-model=form.city
-                      placeholder=new_york class=form-control>
+                      ng-disabled="!cities.length"
+                      uib-typeahead="c.key as c.value for c in cities | filter:{value:$viewValue}:starts_with"
+                      typeahead-editable=false
+                      typeahead-min-length=2
+                      typeahead-select-on-blur=true
+                      typeahead-on-select="update_region_by_city($item)"
+                      autocomplete=off
+                      placeholder="Start typing or leave it empty for all cities"
+                      type="text" class=form-control>
                   </div>
-                  <div class=form-group>
+                  <div class=form-group  ng-show="is_valid_field('asn')">
                     <label class=control-label for=proxy-field-asn>
-                      {{consts.asn.desc}}
+                      {{consts.asn.desc.description}}
                       (<a href=http://bgp.potaroo.net/cidr/autnums.html
                         target=_blank>ASN list</a>)
                     </label>
                     <input id=proxy-field-asn type=number ng-model=form.asn
                       class=form-control>
                   </div>
-                  <div class=form-group>
+                  <div class=form-group  ng-show="is_valid_field('ip')">
                     <label class=control-label for=proxy-field-datacenter-ip>
                       Datacenter IP
                     </label>
@@ -171,27 +288,34 @@
               <div id=proxy-ip-policy class="panel-collapse collapse">
                 <div class=panel-body>
                   <div class=form-group>
-                    <label class=control-label for=proxy-field-max-requests>
-                      Max requests
+                    <input id=proxy-field-session-random type=checkbox
+                      ng-disabled=!form.preset.support.session
+                      ng-model=form.session_random class=form-control>
+                    <label class=control-label for=proxy-field-session-random>
+                      Random Session
                     </label>
-                    <input id=proxy-field-max-requests type=number
-                      ng-model=form.max_requests class=form-control
-                      placeholder={{consts.max_requests.def}}>
                   </div>
                   <div class=form-group>
-                    <label class=control-label for=proxy-field-session-dur>
-                      Session duration (seconds)
+                    <label class=control-label for=proxy-field-session>
+                      Explicit Session
                     </label>
-                    <input id=proxy-field-session-dur type=number
-                      ng-model=form.session_duration class=form-control
-                      placeholder={{consts.session_duration.def}}>
+                    <input id=proxy-field-session ng-model=form.session
+                      ng-disabled="form.session_random&&!form.preset.support.session"
+                      class=form-control placeholder={{consts.session.def}}>
                   </div>
                   <div class=form-group>
                     <label class=control-label for=proxy-field-pool-size>
                       Pool size
+                      <button ng-if="is_show_allocated_ips()"
+                        ng-disabled="!form.preset.support.pool_size"
+                        ng-click="show_allocated_ips()"
+                        type=button class="btn btn-link">
+                        set from allocated IPs
+                      </button>
                     </label>
                     <input id=proxy-field-pool-size type=number
                       ng-model=form.pool_size class=form-control
+                      ng-disabled="!form.preset.support.pool_size||form.ips.length"
                       placeholder={{consts.pool_size.def}}>
                   </div>
                   <div class=form-group>
@@ -199,8 +323,9 @@
                       Pool type
                     </label>
                     <select id=proxy-field-pool-type ng-model=form.pool_type
-                      ng-options="v for v in consts.pool_type.values"
+                      ng-options="pt.value as pt.key for pt in consts.pool_type.values"
                       ng-init="form.pool_type=form.pool_type||''"
+                      ng-disabled=!form.preset.support.pool_type
                       class=form-control>
                     </select>
                   </div>
@@ -213,6 +338,7 @@
                       ng-model=_sticky_ip ng-init="_sticky_ip =
                       form.sticky_ip ? 'yes' : (form.sticky_ip===undefined
                       ||form.sticky_ip==='' ? 'default' : 'no')"
+                      ng-disabled=!form.preset.support.sticky_ip
                       ng-change="binary_changed(form, 'sticky_ip', _sticky_ip)">
                       <option value=no
                         ng-selected=!form.sticky_ip&&form.sticky_ip!==undefined>
@@ -228,12 +354,52 @@
                     </select>
                   </div>
                   <div class=form-group>
+                    <label class=control-label
+                      for=proxy-field-max-requests-start>
+                      Max requests
+                    </label>
+                    <div class=form-range>
+                      <input id=proxy-field-max-requests-start type=number
+                        ng-model=form.max_requests_start class=form-control
+                        ng-disabled=!form.preset.support.max_requests
+                        placeholder={{consts.max_requests.def}}>
+                      <span class=range-seperator>:</span>
+                      <input type=number ng-model=form.max_requests_end
+                        ng-disabled=!form.preset.support.max_requests
+                        class=form-control>
+                    </div>
+                  </div>
+                  <div class=form-group>
+                    <label class=control-label for=proxy-field-duration-start>
+                      Session duration (seconds)
+                    </label>
+                    <div class=form-range>
+                      <input id=proxy-field-duration-start type=number
+                        ng-model=form.duration_start class=form-control
+                        ng-disabled=!form.preset.support.session_duration
+                        placeholder={{consts.session_duration.def}}>
+                      <span class=range-seperator>:</span>
+                      <input type=number ng-model=form.duration_end
+                        ng-disabled=!form.preset.support.session_duration
+                        class=form-control>
+                    </div>
+                  </div>
+                  <div class=form-group>
                     <label class=control-label for=proxy-field-keep-alive>
                       Keep-alive
                     </label>
                     <input id=proxy-field-keep-alive type=number
                       ng-model=form.keep_alive class=form-control
+                      ng-disabled=!form.preset.support.keep_alive
                       placeholder={{consts.keep_alive.def}}>
+                  </div>
+                  <div class=form-group>
+                    <label class=control-label for=proxy-field-seed>
+                      Session ID Seed
+                    </label>
+                    <input id=proxy-field-seed ng-model=form.seed
+                        ng-disabled=!form.preset.support.seed
+                      class=form-control placeholder={{consts.seed.def}}>
                   </div>
                   <div class=form-group>
                     <label class=control-label for=proxy-field-allow-proxy-auth
@@ -272,7 +438,7 @@
                 <div class=panel-body>
                   <div class=form-group>
                     <label class=control-label for=proxy-field-sinit-timeout>
-                      {{consts.session_init_timeout.desc}}
+                      {{consts.session_init_timeout.desc.description}}
                     </label>
                     <input id=proxy-field-sinit-timeout type=number
                       ng-model=form.session_init_timeout class=form-control
@@ -291,23 +457,41 @@
                       DNS resolve
                     </label>
                     <select id=proxy-field-dns-resolve ng-model=form.dns
-                      class=form-control ng-init="form.dns=form.dns||''"
+                      class=form-control
                       ng-options="v for v in consts.dns.values">
                     </select>
                   </div>
                   <div class=form-group>
+                    <label class=control-label for=proxy-field-dns-resolve>
+                      Reverse resolve
+                    </label>
+                    <select id=proxy-field-dns-reverse
+                      ng-model="extra.reverse_lookup" class=form-control>
+                      <option value="">No</option>
+                      <option value="dns">DNS</option>
+                      <option value="file">File</option>
+                      <option value="values">Values</option>
+                    </select>
+                    <input ng-if="extra.reverse_lookup=='file'"
+                      ng-model="extra.reverse_lookup_file"
+                      placeholder=/path/to/file type=text class=form-control>
+                    <textarea ng-if="extra.reverse_lookup=='values'"
+                      ng-model="extra.reverse_lookup_values"
+                      placeholder="1.1.1.1 example.com" class=form-control>
+                    </textarea>
+                  </div>
+                  <div class=form-group>
                     <label class=control-label for=proxy-field-log-level>
                       Log level
-                      {{form.log ? '' : '('+consts.log.def+' by default)'}}
                     </label>
                     <select id=proxy-field-log-level ng-model=form.log
-                      class=form-control ng-init="form.log=form.log||''"
-                      ng-options="v for v in consts.log.values">
+                      class=form-control
+                      ng-options="ll.value as ll.key for ll in consts.log.values">
                     </select>
                   </div>
                   <div class=form-group>
                     <label class=control-label for=proxy-field-proxy-switch>
-                      {{consts.proxy_switch.desc}}
+                      {{consts.proxy_switch.desc.description}}
                     </label>
                     <input id=proxy-field-proxy-switch type=number
                       ng-model=form.proxy_switch class=form-control
@@ -315,7 +499,7 @@
                   </div>
                   <div class=form-group>
                     <label class=control-label for=proxy-field-throttle>
-                      {{consts.throttle.desc}}
+                      {{consts.throttle.desc.description}}
                     </label>
                     <input id=proxy-field-throttle type=number
                       ng-model=form.throttle class=form-control
@@ -323,25 +507,23 @@
                   </div>
                   <div class=form-group>
                     <label class=control-label for=proxy-field-req-timeout>
-                      {{consts.request_timeout.desc}}
+                      {{consts.request_timeout.desc.description}}
                     </label>
                     <input id=proxy-field-req-timeout type=number
                       ng-model=form.request_timeout class=form-control
                       placeholder={{consts.request_timeout.def}}>
                   </div>
-                  <div class=form-group>
-                    <label class=control-label for=proxy-field-proxy>
-                      {{consts.proxy.desc}}
-                    </label>
-                    <input id=proxy-field-proxy ng-model=form.proxy
-                      class=form-control>
-                  </div>
-                  <div class=form-group>
+                  <div class=form-group
+                    ng-class="{'has-error': form_errors.debug}">
                     <label class=control-label for=proxy-field-debug>
-                      {{consts.debug.desc}}
+                      {{consts.debug.desc.description}}
                     </label>
-                    <input id=proxy-field-debug ng-model=form.debug
-                      class=form-control>
+                    <select id=proxy-field-debug ng-model=form.debug
+                      class=form-control
+                      ng-options="d.value as d.key for d in consts.debug.values">
+                    </select>
+                    <span ng-show=form_errors.debug class="help-block">
+                      {{form_errors.debug}}</span>
                   </div>
                 </div>
               </div>
@@ -362,32 +544,32 @@
                     for URL patterns.
                   </p>
                   <div class=form-group>
-                    <label class=control-label for=proxy-field-direct-include>
-                      {{consts.direct_include.desc}}
-                    </label>
-                    <input id=proxy-field-direct-include
-                      ng-model=form.direct.include class=form-control>
-                  </div>
-                  <div class=form-group>
-                    <label class=control-label for=proxy-field-direct-exclude>
-                      {{consts.direct_exclude.desc}}
-                    </label>
-                    <input id=proxy-field-direct-exclude
-                      ng-model=form.direct.exclude class=form-control>
-                  </div>
-                  <div class=form-group>
                     <label class=control-label for=proxy-field-null-response>
-                      {{consts.null_response.desc}}
+                      {{consts.null_response.desc.description}}
                     </label>
                     <input id=proxy-field-null-response
                       ng-model=form.null_response class=form-control>
                   </div>
                   <div class=form-group>
                     <label class=control-label for=proxy-field-bypass-proxy>
-                      {{consts.bypass_proxy.desc}}
+                      {{consts.bypass_proxy.desc.description}}
                     </label>
                     <input id=proxy-field-bypass-proxy
                       ng-model=form.bypass_proxy class=form-control>
+                  </div>
+                  <div class=form-group>
+                    <label class=control-label for=proxy-field-direct-include>
+                      {{consts.direct_include.desc.description}}
+                    </label>
+                    <input id=proxy-field-direct-include
+                      ng-model=form.direct_include class=form-control>
+                  </div>
+                  <div class=form-group>
+                    <label class=control-label for=proxy-field-direct-exclude>
+                      {{consts.exclude_include.desc.description}}
+                    </label>
+                    <input id=proxy-field-direct-exclude
+                      ng-model=form.direct_exclude class=form-control>
                   </div>
                 </div>
               </div>
@@ -395,6 +577,9 @@
           </div>
         </div>
         <div class=modal-footer>
+          <p ng-class="'text-'+status.type" style="display: inline-block">
+            {{status.message}}
+          </p>
           <button type=button class="btn btn-default"
             data-dismiss=modal>
             Cancel

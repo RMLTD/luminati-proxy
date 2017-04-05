@@ -1,16 +1,45 @@
 // LICENSE_CODE ZON ISC
-'use strict'; /*jslint browser:true*/
-define(['angular', 'socket.io-client', 'lodash', 'moment',
-    'codemirror/lib/codemirror', 'codemirror/mode/javascript/javascript',
-    'angular-chart', 'jquery', 'bootstrap', 'bootstrap-datepicker',
-    '_css!app'],
-function(angular, io, _, moment, codemirror){
+'use strict'; /*jslint browser:true*//*global module*/
 
-var module = angular.module('app', []);
+// XXX marka: hack for electron/jquery combination
+if (typeof module=='object')
+{
+    /*jshint -W020*/
+    window.module = module;
+    module = undefined;
+}
 
-module.run(function($rootScope, $window){
-    $window.Chart.defaults.global.colors = ['#803690', '#00ADF9', '#46BFBD',
-        '#FDB45C', '#949FB1', '#4D5360'];
+define(['angular', 'lodash', 'moment', 'codemirror/lib/codemirror',
+    'codemirror/mode/javascript/javascript', 'jquery', 'angular-sanitize',
+    'bootstrap', 'bootstrap-datepicker', '_css!app', 'angular-ui-bootstrap',
+    'es6-shim'],
+function(angular, _, moment, codemirror){
+
+var is_electron = window.process && window.process.versions.electron;
+
+// XXX marka: hack for electron/jquery combination
+if (window.module)
+    module = window.module;
+
+var is_valid_field = function(proxy, name, zone_definition){
+    var value = proxy.zone||zone_definition.def;
+    if (name=='password')
+        return value!='gen';
+    var details = zone_definition.values
+    .filter(function(z){ return z.value==value; })[0];
+    var permissions = details.perm.split(' ');
+    if (['country', 'state', 'city', 'asn', 'ip'].includes(name))
+        return permissions.includes(name);
+    return true;
+};
+
+var module = angular.module('app', ['ngSanitize', 'ui.bootstrap']);
+
+module.config(function($uibTooltipProvider){
+    $uibTooltipProvider.options({placement: 'bottom'});
+});
+
+module.run(function($rootScope, $http, $window){
     var l = $window.location.pathname;
     if (l.match(/zones\/[^\/]+/))
     {
@@ -18,118 +47,108 @@ module.run(function($rootScope, $window){
         $rootScope.subsection = l.split('/').pop();
     }
     else
-        $rootScope.section = l.split('/').pop();
+        $rootScope.section = l.split('/').pop()||'settings';
+    $http.get('/api/mode').then(function(data){
+        var logged_in = data.data.logged_in;
+        if (logged_in)
+            $window.localStorage.setItem('quickstart-creds', true);
+        if (!logged_in && $rootScope.section!='settings')
+            $window.location = '/';
+        if (logged_in&&$rootScope.section=='settings')
+            $window.location = '/proxies';
+        $rootScope.mode = data.data.mode;
+        $rootScope.run_config = data.data.run_config;
+        if ($window.localStorage.getItem('last_run_id')!=
+            $rootScope.run_config.id)
+        {
+            $window.localStorage.setItem('last_run_id',
+                $rootScope.run_config.id);
+            $window.localStorage.setItem('suppressed_warnings', '');
+        }
+        $rootScope.login_failure = data.data.login_failure;
+        $rootScope.$broadcast('error_update');
+        if (logged_in)
+        {
+            var p = 60*60*1000;
+            var recheck = function(){
+                $http.post('/api/recheck').then(function(r){
+                    if (r.data.login_failure)
+                        $window.location = '/';
+                });
+                setTimeout(recheck, p);
+            };
+            var t = +new Date();
+            setTimeout(recheck, p-t%p);
+        }
+    });
 });
 
-module.factory('$proxies', $proxies);
-$proxies.$inject = ['$http', '$q'];
-function $proxies($http, $q){
+module.factory('$proxies', proxies_factory);
+proxies_factory.$inject = ['$http', '$q'];
+function proxies_factory($http, $q){
     var service = {
         subscribe: subscribe,
-        subscribe_stats: subscribe_stats,
         proxies: null,
         update: update_proxies
     };
     var listeners = [];
-    var listeners_stats = [];
     service.update();
-    io().on('stats', stats_event);
     return service;
     function subscribe(func){
         listeners.push(func);
         if (service.proxies)
             func(service.proxies);
     }
-    function subscribe_stats(func){
-        listeners_stats.push(func);
-    }
     function update_proxies(){
-        return $q.all([$http.get('/api/proxies_running'),
-            $http.get('/api/proxies')]).then(function(data){
-            var proxies = data[0].data;
+        var get_status = function(force){
+            var proxy = this;
+            if (!proxy._status_call || force)
+            {
+                var url = '/api/proxy_status/'+proxy.port;
+                if (proxy.proxy_type!='duplicate')
+                    url += '?with_details';
+                proxy._status_call = $http.get(url);
+            }
+            this._status_call.then(function(res){
+                if (res.data.status=='ok')
+                {
+                    proxy._status = 'ok';
+                    proxy._status_details = res.data.status_details||[];
+                }
+                else
+                {
+                    proxy._status = 'error';
+                    var errors = res.data.status_details.filter(function(s){
+                        return s.lvl=='err'; });
+                    proxy._status_details = errors.length ? errors
+                        : [{lvl: 'err', msg: res.data.status}];
+                }
+            }).catch(function(){
+                proxy._status_call = null;
+                proxy._status = 'error';
+                proxy._status_details = [{lvl: 'warn',
+                    msg: 'Failed to get proxy status'}];
+            });
+        };
+        return $http.get('/api/proxies_running').then(function(res){
+            var proxies = res.data;
             proxies.sort(function(a, b){ return a.port>b.port ? 1 : -1; });
-            var config = data[1].data;
-            config.sort(function(a, b){ return a.port>b.port ? 1 : -1; });
-            var config_index = {};
-            for (var i=0; i<config.length; i++)
-                config_index[config[i].port] = config[i];
             proxies.forEach(function(proxy){
-                proxy.stats = {
-                    total: {
-                        active_requests: [],
-                        status: {codes: ['2xx'], values: [[]]},
-                        max: {requests: 0, codes: 0},
-                    },
-                    ticks: [],
-                };
-                proxy.config = config_index[proxy.port];
-                var data = _.values(proxy._stats);
-                proxy.total_stats = {
-                    requests: _.sumBy(data, 'total_requests'),
-                    inbound: _.sumBy(data, 'total_inbound'),
-                    outbound: _.sumBy(data, 'total_outbound'),
-                };
+                if (Array.isArray(proxy.proxy)&&proxy.proxy.length==1)
+                    proxy.proxy = proxy.proxy[0];
+                proxy.get_status = get_status;
+                proxy._status_details = [];
             });
             service.proxies = proxies;
             listeners.forEach(function(cb){ cb(proxies); });
             return proxies;
         });
     }
-    function stats_event(stats_chunk){
-        if (!service.proxies)
-            return;
-        var now = moment().format('hh:mm:ss');
-        for (var port in stats_chunk)
-        {
-            var chunk = stats_chunk[port];
-            var proxy = _.find(service.proxies, {port: +port});
-            var data = _.values(chunk);
-            var stats = proxy.stats;
-            var status = stats.total.status;
-            stats.ticks.push(now);
-            var active_requests = _.sumBy(data, 'active_requests');
-            stats.total.active_requests.push(active_requests);
-            stats.total.max.requests = Math.max(stats.total.max.requests,
-                active_requests);
-            var codes = data.reduce(function(r, host){
-                return r.concat(_.keys(host.status_code)); }, []);
-            codes = _.uniq(codes);
-            codes.forEach(function(code){
-                var i = status.codes.indexOf(code);
-                if (i==-1)
-                {
-                    status.codes.push(code);
-                    i = status.codes.length-1;
-                    status.values.push(new Array(stats.ticks.length-1));
-                    _.fill(status.values[i], 0);
-                }
-                var total = _.sumBy(data, 'status_code.'+code);
-                status.values[i].push(total);
-                stats.total.max.codes = Math.max(stats.total.max.codes, total);
-            });
-            var len = stats.ticks.length;
-            status.values.forEach(function(values){
-                if (values.length<len)
-                    values.push(0);
-            });
-            ['requests', 'codes'].forEach(function(chart){
-                var canvas;
-                if ((canvas = chart_container(chart)) && canvas.att_chart)
-                {
-                    canvas.att_chart.data.datasets = chart_data(
-                        canvas.att_chart_pars).datasets;
-                    canvas.att_chart.update();
-                    canvas.att_scope.$apply();
-                }
-            });
-            listeners_stats.forEach(function(cb){ cb(stats_chunk); });
-        }
-    }
 }
 
-module.controller('root', root);
-root.$inject = ['$rootScope', '$scope', '$http', '$window'];
-function root($rootScope, $scope, $http, $window){
+module.controller('root', Root);
+Root.$inject = ['$rootScope', '$scope', '$http', '$window'];
+function Root($rootScope, $scope, $http, $window){
     $scope.quickstart = function(){
         return $window.localStorage.getItem('quickstart')=='show';
     };
@@ -146,12 +165,28 @@ function root($rootScope, $scope, $http, $window){
             $scope.$apply();
         }});
     };
+    $scope.quickstart_mousedown = function(mouse_dn){
+        var qs = $window.$('#quickstart');
+        var container = $window.$('.main-container-qs');
+        var width = qs.outerWidth();
+        var body_width = $window.$('body').width();
+        var cx = mouse_dn.pageX;
+        var mousemove = function(mouse_mv){
+            var new_width = Math.min(
+                Math.max(width+mouse_mv.pageX-cx, 150), body_width-250);
+            qs.css('width', new_width+'px');
+            container.css('margin-left', new_width+'px');
+        };
+        $window.$('body').on('mousemove', mousemove).one('mouseup', function(){
+            $window.$('body').off('mousemove', mousemove).css('cursor', '');
+        }).css('cursor', 'col-resize');
+    };
     $scope.sections = [
-        {name: 'settings', title: 'Config'},
+        {name: 'settings', title: 'Settings'},
         {name: 'proxies', title: 'Proxies'},
-        {name: 'zones', title: 'Stats'},
+        {name: 'zones', title: 'Zones'},
         {name: 'tools', title: 'Tools'},
-        /*{name: 'faq', title: 'FAQ'},*/
+        {name: 'faq', title: 'FAQ'},
     ];
     for (var s in $scope.sections)
     {
@@ -161,98 +196,30 @@ function root($rootScope, $scope, $http, $window){
             break;
         }
     }
-    $http.get('/api/creds').then(function(settings){
+    $http.get('/api/settings').then(function(settings){
         $scope.settings = settings.data;
-        if (!$scope.settings.customer)
+        if (!$scope.settings.request_disallowed&&!$scope.settings.customer)
         {
-            if ($scope.section.name!='settings')
-                $window.location = 'settings';
-            else if (!$window.localStorage.getItem('quickstart'))
+            if (!$window.localStorage.getItem('quickstart'))
                 $window.localStorage.setItem('quickstart', 'show');
         }
+    });
+    $http.get('/api/ip').then(function(ip){
+        $scope.ip = ip.data.ip;
     });
     $http.get('/api/version').then(function(version){
         $scope.ver_cur = version.data.version;
     });
     $http.get('/api/last_version').then(function(version){
-        $scope.ver_last = version.data.version;
+        $scope.ver_last = version.data;
     });
     $http.get('/api/consts').then(function(consts){
         $scope.consts = consts.data;
+        $scope.$broadcast('consts', consts.data);
     });
     $http.get('/api/node_version').then(function(node){
         $scope.ver_node = node.data;
     });
-}
-
-module.controller('settings', settings);
-settings.$inject = ['$scope', '$http', '$window'];
-function settings($scope, $http, $window){
-    $http.get('/api/status').then(function(status){
-        if (!$scope.status)
-            $scope.status = status.data;
-    });
-    $http.get('/api/config').then(function(config){
-        $scope.config = config.data.config;
-        $scope.codemirror = codemirror.fromTextArea(
-            $window.$('#config textarea').get(0), {
-            mode: 'javascript',
-        });
-    });
-    $scope.resolve_missing =
-        !$scope.$parent.settings.resolve&&$scope.$parent.settings.socks;
-    $scope.resolve_auto = $scope.$parent.settings.resolve===true;
-    $scope.resolve_file =
-    $scope.$parent.settings.resolve&&$scope.$parent.settings.resolve!==true;
-    $scope.update_resolve = function(){
-        $http.get('/api/resolve').then(function(resolve){
-            $scope.resolve = {text: resolve.data.resolve};
-        });
-    };
-    if ($scope.resolve_file)
-        $scope.update_resolve();
-    var parse_username = function(username){
-        var values = {};
-        username = username.split('-');
-        username.shift();
-        var p = 0;
-        while (p+1 < username.length)
-        {
-            values[username[p]] = username[p+1];
-            p += 2;
-        }
-        return values;
-    };
-    $scope.parse_arguments = function(args){
-        return args.replace(/(--password )(.+?)( --|$)/, '$1|||$2|||$3')
-        .split('|||');
-    };
-    $scope.show_password = function(){
-        $scope.args_password = true;
-    };
-    $scope.fix_username = function(){
-        var customer = $scope.$parent.settings.customer.trim();
-        var zone = ($scope.$parent.settings.zone||'').trim();
-        if (!customer.match(/^lum-/))
-            return false;
-        var values = parse_username(customer);
-        if (!values.customer)
-            return false;
-        $scope.$parent.settings.customer = values.customer;
-        if (!values.zone||values.zone==zone)
-            return true;
-        $scope.$parent.$parent.confirmation = {
-            text: 'It appears you have entered a composite username which '
-                +'contains a zone name. Do you want "'+values.zone+'" to be '
-                +'your default zone?',
-            confirmed: function(){
-                $scope.$parent.settings.zone = values.zone;
-            },
-        };
-        $window.$('#confirmation').modal();
-        return true;
-    };
-    var modals_time = 400;
     var show_reload = function(){
         $window.$('#restarting').modal({
             backdrop: 'static',
@@ -260,97 +227,49 @@ function settings($scope, $http, $window){
         });
     };
     var check_reload = function(){
-        $http.get('/api/config').error(
+        $http.get('/api/config').catch(
             function(){ setTimeout(check_reload, 500); })
         .then(function(){ $window.location.reload(); });
     };
-    $scope.save = function(){
-        if ($scope.fix_username())
-            return;
-        $scope.saving = true;
-        $http.post('/api/creds', {
-            customer: $scope.$parent.settings.customer.trim(),
-            zone: $scope.$parent.settings.zone.trim(),
-            password: $scope.$parent.settings.password.trim(),
-        }).then(function(){
-            $scope.saving = false;
-            $window.localStorage.setItem('quickstart-creds', true);
-            show_reload();
-            check_reload();
-        });
+    $scope.is_upgradable = function(){
+        if (!is_electron && $scope.ver_last && $scope.ver_last.newer)
+        {
+            var version = $window.localStorage.getItem('dismiss_upgrade');
+            return version ? $scope.ver_last.version>version : true;
+        }
+        return false;
     };
-    $scope.edit_config = function(){
-        $scope.$parent.$parent.confirmation = {
-            text: 'Editing the configuration manually may result in your '
-                +'proxies working incorrectly. Do you still want to modify '
-                +'the configuration file?',
+    $scope.dismiss_upgrade = function(){
+        $window.localStorage.setItem('dismiss_upgrade',
+            $scope.ver_last.version);
+    };
+    $scope.upgrade = function(){
+        $scope.confirmation = {
+            text: 'The application will be upgraded and restarted.',
             confirmed: function(){
-                var ctime = Date.now();
-                $http.get('/api/config').then(function(config){
-                    $scope.config = config.data.config;
-                    $scope.codemirror.setValue($scope.config);
-                    setTimeout(function(){
-                        $window.$('#config').one('shown.bs.modal', function(){
-                            $scope.codemirror.scrollTo(0, 0);
-                            $scope.codemirror.refresh();
-                        }).modal();
-                    }, Math.max(0, modals_time-(Date.now()-ctime)));
+                $window.$('#upgrading').modal({backdrop: 'static',
+                    keyboard: false});
+                $scope.upgrading = true;
+                $http.post('/api/upgrade').catch(function(){
+                    $scope.upgrading = false;
+                    $scope.upgrade_error = true;
+                }).then(function(data){
+                    $scope.upgrading = false;
+                    $http.post('/api/restart').catch(function(){
+                        // $scope.upgrade_error = true;
+                        show_reload();
+                        check_reload();
+                    }).then(function(d){
+                        show_reload();
+                        check_reload();
+                    });
                 });
             },
         };
         $window.$('#confirmation').modal();
     };
-    $scope.update_config = function(){
-        $http.get('/api/config').then(function(config){
-            $scope.config = config.data.config;
-            var scroll = $scope.codemirror.getScrollInfo();
-            $scope.codemirror.setValue($scope.config);
-            $scope.codemirror.scrollTo(scroll.left, scroll.top);
-        });
-    };
-    $scope.save_config = function(){
-        $scope.config = $scope.codemirror.getValue();
-        setTimeout(show_reload, modals_time);
-        $http.post('/api/config', {config: $scope.config}).then(check_reload);
-    };
-    $scope.edit_resolve = function(){
-        $window.$('#resolve').modal();
-    };
-    $scope.save_resolve = function(){
-        setTimeout(show_reload, modals_time);
-        $http.post('/api/resolve', {resolve: $scope.resolve.text})
-        .then(check_reload);
-    };
-    $scope.resolve_new = function(){
-        $window.$('#resolve_add').one('shown.bs.modal', function(){
-            $window.$('#resolve_add input').select();
-        }).modal();
-    };
-    $scope.resolve_add = function(){
-        $scope.resolve_adding = true;
-        $scope.resolve_error = false;
-        var host = $scope.resolve_host.host.trim();
-        $http.get('/api/resolve_host/'+host)
-        .then(function(ips){
-            $scope.resolve_adding = false;
-            if (ips.data.ips&&ips.data.ips.length)
-            {
-                for (var i=0; i<ips.data.ips.length; i++)
-                    $scope.resolve.text += '\n'+ips.data.ips[i]+' '+host;
-                setTimeout(function(){
-                    var textarea = $window.$('#resolve textarea');
-                    textarea.scrollTop(textarea.prop('scrollHeight'));
-                }, 0);
-                $scope.resolve_host.host = '';
-                $scope.resolve_frm.$setPristine();
-                $window.$('#resolve_add').modal('hide');
-            }
-            else
-                $scope.resolve_error = true;
-        });
-    };
     $scope.shutdown = function(){
-        $scope.$parent.$parent.confirmation = {
+        $scope.confirmation = {
             text: 'Are you sure you want to shut down the local proxies?',
             confirmed: function(){
                 $http.post('/api/shutdown');
@@ -359,57 +278,295 @@ function settings($scope, $http, $window){
                         backdrop: 'static',
                         keyboard: false,
                     });
-                }, modals_time);
+                }, 400);
             },
         };
         $window.$('#confirmation').modal();
     };
-    $scope.upgrade = function(){
-        $scope.$parent.$parent.confirmation = {
-            text: 'The application will be upgraded and restarted.',
-            confirmed: function(){
-                $scope.upgrading = true;
-                $http.post('/api/upgrade').error(function(){
-                    $scope.upgrading = false;
-                    $scope.upgrade_error = true;
-                }).then(function(data){
-                    $scope.upgrading = false;
-                    show_reload();
-                    check_reload();
-                });
-            },
-        };
-        $window.$('#confirmation').modal();
+    $scope.logout = function(){
+        $http.post('/api/logout').then(function cb(){
+            $http.get('/api/config').catch(function(){ setTimeout(cb, 500); })
+                .then(function(){ $window.location = '/'; });
+        });
+    };
+    $scope.warnings = function(){
+        if (!$rootScope.run_config||!$rootScope.run_config.warnings)
+            return [];
+        var suppressed =
+            $window.localStorage.getItem('suppressed_warnings').split('|||');
+        var warnings = [];
+        for (var i=0; i<$rootScope.run_config.warnings.length; i++)
+        {
+            var w = $rootScope.run_config.warnings[i];
+            if (!suppressed.includes(w))
+                warnings.push(w);
+        }
+        return warnings;
+    };
+    $scope.dismiss_warning = function(warning){
+        var warnings =
+            $window.localStorage.getItem('suppressed_warnings').split('|||');
+        warnings.push(warning);
+        $window.localStorage.setItem('suppressed_warnings',
+            warnings.join('|||'));
     };
 }
 
-module.controller('zones', zones);
-zones.$inject = ['$scope', '$http', '$filter', '$window'];
-function zones($scope, $http, $filter, $window){
+module.controller('config', Config);
+Config.$inject = ['$scope', '$http', '$window'];
+function Config($scope, $http, $window){
+    $http.get('/api/config').then(function(config){
+        $scope.config = config.data.config;
+        setTimeout(function(){
+            $scope.codemirror = codemirror.fromTextArea(
+                $window.$('#config-textarea').get(0), {mode: 'javascript'});
+        }, 0);
+    });
+    var show_reload = function(){
+        $window.$('#restarting').modal({
+            backdrop: 'static',
+            keyboard: false,
+        });
+    };
+    var check_reload = function(){
+        $http.get('/api/config').catch(
+            function(){ setTimeout(check_reload, 500); })
+        .then(function(){ $window.location.reload(); });
+    };
+    $scope.save = function(){
+        $scope.errors = null;
+        $http.post('/api/config_check', {config: $scope.codemirror.getValue()})
+        .then(function(res){
+            $scope.errors = res.data;
+            if ($scope.errors.length)
+                return;
+            $scope.$parent.$parent.$parent.confirmation = {
+                text: 'Editing the configuration manually may result in your '
+                    +'proxies working incorrectly. Do you still want to modify'
+                    +' the configuration file?',
+                confirmed: function(){
+                    $scope.config = $scope.codemirror.getValue();
+                    show_reload();
+                    $http.post('/api/config', {config: $scope.config})
+                    .then(check_reload);
+                },
+            };
+            $window.$('#confirmation').modal();
+        });
+    };
+    $scope.update = function(){
+        $http.get('/api/config').then(function(config){
+            $scope.config = config.data.config;
+            $scope.codemirror.setValue($scope.config);
+        });
+    };
+    $window.$('#config-panel')
+    .on('hidden.bs.collapse', $scope.update)
+    .on('show.bs.collapse', function(){
+        setTimeout(function(){
+            $scope.codemirror.scrollTo(0, 0);
+            $scope.codemirror.refresh();
+        }, 0);
+    });
+    $scope.cancel = function(){
+        $window.$('#config-panel > .collapse').collapse('hide');
+    };
+}
+
+module.controller('resolve', Resolve);
+Resolve.$inject = ['$scope', '$http', '$window'];
+function Resolve($scope, $http, $window){
+    $scope.resolve = {text: ''};
+    $scope.update = function(){
+        $http.get('/api/resolve').then(function(resolve){
+            $scope.resolve.text = resolve.data.resolve;
+        });
+    };
+    $scope.update();
+    var show_reload = function(){
+        $window.$('#restarting').modal({
+            backdrop: 'static',
+            keyboard: false,
+        });
+    };
+    var check_reload = function(){
+        $http.get('/api/config').catch(
+            function(){ setTimeout(check_reload, 500); })
+        .then(function(){ $window.location.reload(); });
+    };
+    $scope.save = function(){
+        show_reload();
+        $http.post('/api/resolve', {resolve: $scope.resolve.text})
+        .then(check_reload);
+    };
+    $window.$('#resolve-panel')
+    .on('hidden.bs.collapse', $scope.update)
+    .on('show.bs.collapse', function(){
+        setTimeout(function(){
+            $window.$('#resolve-textarea').scrollTop(0).scrollLeft(0);
+        }, 0);
+    });
+    $scope.cancel = function(){
+        $window.$('#resolve-panel > .collapse').collapse('hide');
+    };
+    $scope.new_host = function(){
+        $window.$('#resolve_add').one('shown.bs.modal', function(){
+            $window.$('#resolve_add input').select();
+        }).modal();
+    };
+    $scope.add_host = function(){
+        $scope.adding = true;
+        $scope.error = false;
+        var host = $scope.host.host.trim();
+        $http.get('/api/resolve_host/'+host)
+        .then(function(ips){
+            $scope.adding = false;
+            if (ips.data.ips&&ips.data.ips.length)
+            {
+                for (var i=0; i<ips.data.ips.length; i++)
+                    $scope.resolve.text += '\n'+ips.data.ips[i]+' '+host;
+                setTimeout(function(){
+                    var textarea = $window.$('#resolve-textarea');
+                    textarea.scrollTop(textarea.prop('scrollHeight'));
+                }, 0);
+                $scope.host.host = '';
+                $scope.resolve_frm.$setPristine();
+                $window.$('#resolve_add').modal('hide');
+            }
+            else
+                $scope.error = true;
+        });
+    };
+}
+
+module.controller('settings', Settings);
+Settings.$inject = ['$scope', '$http', '$window', '$sce', '$rootScope'];
+function Settings($scope, $http, $window, $sce, $rootScope){
+    var update_error = function(){
+        if ($rootScope.relogin_required)
+            return $scope.user_error = {message: 'Please log in again.'};
+        if (!$rootScope.login_failure)
+            return;
+        switch ($rootScope.login_failure)
+        {
+        case 'eval_expired':
+            $scope.user_error = {message: 'Evaluation expired!'
+                +'<a href=https://luminati.io/#contact>Please contact your '
+                +'Luminati rep.</a>'};
+            break;
+        case 'invalid_creds':
+        case 'unknown':
+            $scope.user_error = {message: 'Your proxy is not responding.<br>'
+                +'Please go to the <a href=https://luminati.io/cp/zones/'
+                +$scope.$parent.settings.zone+'>zone page</a> and verify that '
+                +'your IP address '+($scope.$parent.ip ? '('+$scope.$parent.ip
+                +')' : '')+' is in the whitelist.'};
+            break;
+        default:
+            $scope.user_error = {message: $rootScope.login_failure};
+        }
+    };
+    update_error();
+    $scope.$on('error_update', update_error);
+    $scope.parse_arguments = function(args){
+        return args.replace(/(--password )(.+?)( --|$)/, '$1|||$2|||$3')
+        .split('|||');
+    };
+    $scope.show_password = function(){ $scope.args_password = true; };
+    var check_reload = function(){
+        $http.get('/api/config').catch(
+            function(){ setTimeout(check_reload, 500); })
+        .then(function(){ $window.location = '/proxies'; });
+    };
+    $scope.user_data = {username: '', password: ''};
+    var token;
+    $scope.save_user = function(){
+        var creds = {};
+        if (token)
+            creds = {token: token};
+        else
+        {
+            var username = $scope.user_data.username;
+            var password = $scope.user_data.password;
+            if (!(username = username.trim()))
+            {
+                $scope.user_error = {
+                    message: 'Please enter a valid email address.',
+                    username: true};
+                return;
+            }
+            if (!password)
+            {
+                $scope.user_error = {message: 'Please enter a password.',
+                    password: true};
+                return;
+            }
+            creds = {username: username, password: password};
+        }
+        $scope.saving_user = true;
+        $scope.user_error = null;
+        if ($scope.user_customers)
+            creds.customer = $scope.user_data.customer;
+        $http.post('/api/creds_user', creds).then(function(d){
+            if (d.data.customers)
+            {
+                $scope.saving_user = false;
+                $scope.user_customers = d.data.customers;
+                $scope.user_data.customer = $scope.user_customers[0];
+            }
+            else
+                check_reload();
+        }).catch(function(error){
+            $scope.saving_user = false;
+            $scope.user_error = error.data.error;
+        });
+    };
+    $scope.google_click = function(e){
+        var google = $window.$(e.currentTarget), l = $window.location;
+        google.attr('href', google.attr('href')+'&state='+encodeURIComponent(
+            l.protocol+'//'+l.hostname+':'+(l.port||80)+'?api_version=3'));
+    };
+    var m, qs_regex = /\&t=([a-zA-Z0-9\+\/=]+)$/;
+    if (m = $window.location.search.match(qs_regex))
+    {
+        $scope.google_login = true;
+        token = m[1];
+        $scope.save_user();
+    }
+}
+
+module.controller('zones', Zones);
+Zones.$inject = ['$scope', '$http', '$filter', '$window'];
+function Zones($scope, $http, $filter, $window){
     $window.localStorage.setItem('quickstart-zones-tools', true);
     var today = new Date();
-    var oneDayAgo = (new Date()).setDate(today.getDate()-1);
-    var twoDaysAgo = (new Date()).setDate(today.getDate()-2);
-    var oneMonthAgo = (new Date()).setMonth(today.getMonth()-1, 1);
-    var twoMonthsAgo = (new Date()).setMonth(today.getMonth()-2, 1);
+    var one_day_ago = (new Date()).setDate(today.getDate()-1);
+    var two_days_ago = (new Date()).setDate(today.getDate()-2);
+    var one_month_ago = (new Date()).setMonth(today.getMonth()-1, 1);
+    var two_months_ago = (new Date()).setMonth(today.getMonth()-2, 1);
     $scope.times = [
-        {title: moment(twoMonthsAgo).format('MMM-YYYY'), key: 'back_m2'},
-        {title: moment(oneMonthAgo).format('MMM-YYYY'), key: 'back_m1'},
+        {title: moment(two_months_ago).format('MMM-YYYY'), key: 'back_m2'},
+        {title: moment(one_month_ago).format('MMM-YYYY'), key: 'back_m1'},
         {title: moment(today).format('MMM-YYYY'), key: 'back_m0'},
-        {title: moment(twoDaysAgo).format('DD-MMM-YYYY'), key: 'back_d2'},
-        {title: moment(oneDayAgo).format('DD-MMM-YYYY'), key: 'back_d1'},
+        {title: moment(two_days_ago).format('DD-MMM-YYYY'), key: 'back_d2'},
+        {title: moment(one_day_ago).format('DD-MMM-YYYY'), key: 'back_d1'},
         {title: moment(today).format('DD-MMM-YYYY'), key: 'back_d0'},
     ];
-    var numberFilter = $filter('requests');
-    var sizeFilter = $filter('bytes');
+    var number_filter = $filter('requests');
+    var size_filter = $filter('bytes');
     $scope.fields = [
-        {key: 'http_svc_req', title: 'HTTP', filter: numberFilter},
-        {key: 'https_svc_req', title: 'HTTPS', filter: numberFilter},
-        {key: 'bw_up', title: 'Upload', filter: sizeFilter},
-        {key: 'bw_dn', title: 'Download', filter: sizeFilter},
-        {key: 'bw_sum', title: 'Total Bandwidth', filter: sizeFilter}
+        {key: 'http_svc_req', title: 'HTTP', filter: number_filter},
+        {key: 'https_svc_req', title: 'HTTPS', filter: number_filter},
+        {key: 'bw_up', title: 'Upload', filter: size_filter},
+        {key: 'bw_dn', title: 'Download', filter: size_filter},
+        {key: 'bw_sum', title: 'Total Bandwidth', filter: size_filter}
     ];
     $http.get('/api/stats').then(function(stats){
+        if (stats.data.login_failure)
+        {
+            $window.location = '/';
+            return;
+        }
         $scope.stats = stats.data;
         if (!Object.keys($scope.stats).length)
             $scope.error = true;
@@ -426,10 +583,14 @@ function zones($scope, $http, $filter, $window){
     };
 }
 
-module.controller('faq', faq);
-faq.$inject = ['$scope'];
-function faq($scope){
+module.controller('faq', Faq);
+Faq.$inject = ['$scope'];
+function Faq($scope){
     $scope.questions = [
+        {
+            name: 'links',
+            title: 'More info on the Luminati proxy manager',
+        },
         {
             name: 'upgrade',
             title: 'How can I upgrade Luminati proxy manager tool?',
@@ -441,9 +602,9 @@ function faq($scope){
     ];
 }
 
-module.controller('test', test);
-test.$inject = ['$scope', '$http', '$filter', '$window'];
-function test($scope, $http, $filter, $window){
+module.controller('test', Test);
+Test.$inject = ['$scope', '$http', '$filter', '$window'];
+function Test($scope, $http, $filter, $window){
     $window.localStorage.setItem('quickstart-zones-tools', true);
     var preset = JSON.parse(decodeURIComponent(($window.location.search.match(
         /[?&]test=([^&]+)/)||['', 'null'])[1]));
@@ -456,7 +617,10 @@ function test($scope, $http, $filter, $window){
         $scope.body = preset.body;
     }
     else
+    {
         $scope.method = 'GET';
+        $scope.url = 'http://lumtest.com/myip.json';
+    }
     $http.get('/api/proxies').then(function(proxies){
         $scope.proxies = [['0', 'No proxy']];
         proxies.data.sort(function(a, b){ return a.port>b.port ? 1 : -1; });
@@ -514,9 +678,9 @@ function test($scope, $http, $filter, $window){
     };
 }
 
-module.controller('countries', countries);
-countries.$inject = ['$scope', '$http', '$window'];
-function countries($scope, $http, $window){
+module.controller('countries', Countries);
+Countries.$inject = ['$scope', '$http', '$window'];
+function Countries($scope, $http, $window){
     $scope.url = '';
     $scope.ua = '';
     $scope.path = '';
@@ -546,11 +710,11 @@ function countries($scope, $http, $window){
                 while ($scope.cur_index<$scope.countries.length&&
                     $scope.num_loading<max_concur)
                 {
-                    if ($scope.countries[$scope.cur_index].status == 0)
+                    if (!$scope.countries[$scope.cur_index].status)
                     {
                         $scope.countries[$scope.cur_index].status = 1;
                         $scope.countries[$scope.cur_index].img.src =
-                        $scope.countries[$scope.cur_index].url;
+                            $scope.countries[$scope.cur_index].url;
                         $scope.num_loading++;
                     }
                     $scope.cur_index++;
@@ -582,7 +746,7 @@ function countries($scope, $http, $window){
                     img: new Image(),
                     index: $scope.countries.length,
                 };
-                data.img.onerror = (function(data, started){
+                data.img.onerror = (function(started){
                     return function(){
                         if ($scope.started!=started)
                             return;
@@ -590,8 +754,8 @@ function countries($scope, $http, $window){
                         $scope.num_loading--;
                         progress(true);
                     };
-                })(data, $scope.started);
-                data.img.onload = (function(data, started){
+                })($scope.started);
+                data.img.onload = (function(started){
                     return function(){
                         if ($scope.started!=started)
                             return;
@@ -599,7 +763,7 @@ function countries($scope, $http, $window){
                         $scope.num_loading--;
                         progress(true);
                     };
-                })(data, $scope.started);
+                })($scope.started);
                 $scope.countries.push(data);
             }
             progress(false);
@@ -627,7 +791,7 @@ function countries($scope, $http, $window){
         }).modal();
     };
     $scope.cancel = function(country){
-        if (country.status==0)
+        if (!country.status)
             country.status = 2;
         else if (country.status==1)
             country.img.src = '';
@@ -666,195 +830,478 @@ module.filter('startFrom', function(){
     };
 });
 
-module.controller('proxies', proxies);
-proxies.$inject = ['$scope', '$http', '$proxies', '$window'];
-function proxies($scope, $http, $proxies, $window){
+function check_by_re(r, v){ return (v = v.trim()) && r.test(v); }
+var check_number = check_by_re.bind(null, /^\d+$/);
+function check_reg_exp(v){
+    try { return (v = v.trim()) || new RegExp(v, 'i'); }
+    catch(e){ return false; }
+}
+
+var presets = {
+    session_long: {
+        title: 'Long single session (IP)',
+        check: function(opt){ return !opt.pool_size && !opt.sticky_ipo
+            && opt.session===true && opt.keep_alive; },
+        set: function(opt){
+            opt.pool_size = 0;
+            opt.ips = [];
+            opt.keep_alive = opt.keep_alive || 50;
+            opt.pool_type = undefined;
+            opt.sticky_ip = false;
+            opt.session = true;
+            if (opt.session===true)
+                opt.seed = false;
+        },
+        support: {
+            keep_alive: true,
+            multiply: true,
+            session_ducation: true,
+            max_requests: true,
+        },
+    },
+    session: {
+        title: 'Single session (IP)',
+        check: function(opt){ return !opt.pool_size && !opt.sticky_ip
+            && opt.session===true && !opt.keep_alive; },
+        set: function(opt){
+            opt.pool_size = 0;
+            opt.ips = [];
+            opt.keep_alive = 0;
+            opt.pool_type = undefined;
+            opt.sticky_ip = false;
+            opt.session = true;
+            if (opt.session===true)
+                opt.seed = false;
+        },
+        support: {
+            multiply: true,
+            session_duration: true,
+            max_requests: true,
+        },
+    },
+    sticky_ip: {
+        title: 'Session (IP) per machine',
+        check: function(opt){ return !opt.pool_size && opt.sticky_ip; },
+        set: function(opt){
+            opt.pool_size = 0;
+            opt.ips = [];
+            opt.pool_type = undefined;
+            opt.sticky_ip = true;
+            opt.session = undefined;
+            opt.multiply = undefined;
+        },
+        support: {
+            keep_alive: true,
+            max_requests: true,
+            session_duration: true,
+            seed: true,
+        },
+    },
+    sequential: {
+        title: 'Sequential session (IP) pool',
+        check: function(opt){ return opt.pool_size &&
+            (!opt.pool_type || opt.pool_type=='sequential'); },
+        set: function(opt){
+            opt.pool_size = opt.pool_size || 1;
+            opt.pool_type = 'sequential';
+            opt.sticky_ip = undefined;
+            opt.session = undefined;
+        },
+        support: {
+            pool_size: true,
+            keep_alive: true,
+            max_requests: true,
+            session_duration: true,
+            multiply: true,
+            seed: true,
+        },
+    },
+    round_robin: {
+        title: 'Round-robin (IP) pool',
+        check: function(opt){ return opt.pool_size
+            && opt.pool_type=='round-robin' && !opt.multiply; },
+        set: function(opt){
+            opt.pool_size = opt.pool_size || 1;
+            opt.pool_type = 'round-robin';
+            opt.sticky_ip = undefined;
+            opt.session = undefined;
+            opt.multiply = undefined;
+        },
+        support: {
+            pool_size: true,
+            keep_alive: true,
+            max_requests: true,
+            session_duration: true,
+            seed: true,
+        },
+    },
+    custom: {
+        title: 'Custom',
+        check: function(opt){ return true; },
+        set: function(opt){},
+        support: {
+            session: true,
+            sticky_ip: true,
+            pool_size: true,
+            pool_type: true,
+            keep_alive: true,
+            max_requests: true,
+            session_duration: true,
+            multiply: true,
+            seed: true,
+        },
+    },
+};
+for (var k in presets)
+    presets[k].key = k;
+
+module.controller('proxies', Proxies);
+Proxies.$inject = ['$scope', '$http', '$proxies', '$window', '$q', '$timeout'];
+function Proxies($scope, $http, $proxies, $window, $q, $timeout){
+    var prepare_opts = function(opt){
+        return opt.map(function(o){ return {key: o, value: o}; }); };
+    var iface_opts = [], zone_opts = [];
+    var country_opts = [], region_opts = {}, cities_opts = {};
+    var pool_type_opts = [], dns_opts = [], log_opts = [], debug_opts = [];
+    $scope.presets = presets;
     var opt_columns = [
         {
             key: 'port',
             title: 'Port',
             type: 'number',
-            check: function(v){
-                return v.match(/^\d+$/)&&v>=24000;
+            check: function(v, config){
+                if (check_number(v) && v>=24000)
+                {
+                    var conflicts = $proxies.proxies.filter(function(proxy){
+                        return proxy.port==v&&proxy.port!=config.port; });
+                    return !conflicts.length;
+                }
+                return false;
             },
         },
-        {key: 'super_proxy', title: 'Host'},
+        {
+            key: '_status',
+            title: 'Status',
+            type: 'status',
+        },
+        {
+            key: 'iface',
+            title: 'Interface',
+            type: 'options',
+            options: function(){ return iface_opts; },
+        },
+        {
+            key: 'multiply',
+            title: 'Multiple',
+            type: 'number',
+        },
+        {
+            key: 'history',
+            title: 'History',
+            type: 'boolean',
+        },
+        {
+            key: 'ssl',
+            title: 'SSL sniffing',
+            type: 'boolean',
+        },
+        {
+            key: 'socks',
+            title: 'SOCKS port',
+            type: 'number',
+            check: check_number,
+        },
         {
             key: 'zone',
             title: 'Zone',
-            type: 'text',
-            check: function(v){
-                return true;
-            },
+            type: 'options',
+            options: function(){ return zone_opts; },
         },
-        {key: 'socks', title: 'SOCKS'},
+        {
+            key: 'secure_proxy',
+            title: 'SSL for super proxy',
+            type: 'boolean',
+        },
         {
             key: 'country',
             title: 'Country',
             type: 'options',
-            options: function(){
-                return $scope.$parent.consts.proxy.country.values;
+            options: function(){ return country_opts; },
+        },
+        {
+            key: 'state',
+            title: 'State',
+            type: 'options',
+            options: function(proxy){ return load_regions(proxy.country); },
+        },
+        {
+            key: 'city',
+            title: 'City',
+            type: 'autocomplete',
+            check: function(){ return true; },
+            options: function(proxy){ return load_cities(proxy); },
+        },
+        {
+            key: 'asn',
+            title: 'ASN',
+            type: 'number',
+            check: function(v){ return check_number(v) && v<400000; },
+        },
+        {
+            key: 'ip',
+            title: 'Datacenter IP',
+            type: 'text',
+            check: function(v){
+                if (!(v = v.trim()))
+                    return true;
+                var m = v.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+                if (!m)
+                    return false;
+                for (var i = 1; i<=4; i++)
+                {
+                    if (m[i]!=='0' && m[i].charAt(0)=='0' || m[i]>255)
+                        return false;
+                }
+                return true;
             },
         },
-        {key: 'state', title: 'State'},
-        {key: 'city', title: 'City'},
-        {key: 'asn', title: 'ASN'},
-        {key: 'cid', title: 'Client ID'},
-        {key: 'ip', title: 'IP'},
-        {key: 'session_init_timeout', title: 'Session init timeout'},
-        {key: 'dns', title: 'DNS'},
-        {key: 'request_timeout', title: 'Request Timeout'},
-        {key: 'resolve', title: 'Resolve'},
-        {key: 'pool_size', title: 'Pool size'},
-        {key: 'pool_type', title: 'Pool type'},
-        {key: 'proxy_count', title: 'Minimum proxies count'},
+        {
+            key: 'max_requests',
+            title: 'Max requests',
+            type: 'text',
+            check: function(v){ return !v || check_by_re(/^\d+(:\d*)?$/, v); },
+        },
+        {
+            key: 'session_duration',
+            title: 'Session duration (sec)',
+            type: 'text',
+            check: function(v){ return !v || check_by_re(/^\d+(:\d*)?$/, v); },
+        },
+        {
+            key: 'pool_size',
+            title: 'Pool size',
+            type: 'number',
+            check: function(v){ return !v || check_number(v); },
+        },
+        {
+            key: 'pool_type',
+            title: 'Pool type',
+            type: 'options',
+            options: function(){ return pool_type_opts; },
+        },
         {
             key: 'sticky_ip',
             title: 'Sticky IP',
             type: 'boolean',
         },
-        {key: 'keep_alive', title: 'Keep-alive'},
-        {key: 'allow_proxy_auth', title: 'Allow request authentication'},
         {
-            key: 'max_requests',
-            title: 'Max requests',
+            key: 'keep_alive',
+            title: 'Keep-alive',
             type: 'number',
-            check: function(v){
-                return v.trim()==''||v.match(/^\d+$/);
-            },
+            check: function(v){ return !v || check_number(v); },
         },
-        {key: 'session_duration', title: 'Max session duration'},
-        {key: 'throttle', title: 'Throttle concurrent connections'},
-        {key: 'log', title: 'Log Level'},
-        {key: 'debug', title: 'Luminati debug'},
+        {
+            key: 'seed',
+            title: 'Seed',
+            type: 'text',
+            check: function(v){ return !v || check_by_re(/^[^\.\-]*$/, v); },
+        },
+        {
+            key: 'session',
+            title: 'Session',
+            type: 'text',
+            check: function(v){ return !v || check_by_re(/^[^\.\-]*$/, v); },
+        },
+        {
+            key: 'allow_proxy_auth',
+            title: 'Allow request authentication',
+            type: 'boolean',
+        },
+        {
+            key: 'session_init_timeout',
+            title: 'Session init timeout (sec)',
+            type: 'number',
+            check: function(v){ return !v ||check_number(v); },
+        },
+        {
+            key: 'proxy_count',
+            title: 'Min number of super proxies',
+            type: 'number',
+            check: function(v){ return !v ||check_number(v); },
+        },
+        {
+            key: 'dns',
+            title: 'DNS',
+            type: 'options',
+            options: function(){ return dns_opts; },
+        },
+        {
+            key: 'log',
+            title: 'Log Level',
+            type: 'options',
+            options: function(){ return log_opts; },
+        },
+        {
+            key: 'proxy_switch',
+            title: 'Autoswitch super proxy on failure',
+            type: 'number',
+            check: function(v){ return !v || check_number(v); },
+        },
+        {
+            key: 'throttle',
+            title: 'Throttle concurrent connections',
+            type: 'number',
+            check: function(v){ return !v || check_number(v); },
+        },
+        {
+            key: 'request_timeout',
+            title: 'Request timeout (sec)',
+            type: 'number',
+            check: function(v){ return !v || check_number(v); },
+        },
+        {
+            key: 'debug',
+            title: 'Debug info',
+            type: 'options',
+            options: function(){ return debug_opts; },
+        },
+        {
+            key: 'null_response',
+            title: 'NULL response',
+            type: 'text',
+            check: check_reg_exp,
+        },
+        {
+            key: 'bypass_proxy',
+            title: 'Bypass proxy',
+            type: 'text',
+            check: check_reg_exp,
+        },
+        {
+            key: 'direct_include',
+            title: 'Direct include',
+            type: 'text',
+            check: check_reg_exp,
+        },
+        {
+            key: 'direct_exclude',
+            title: 'Direct exclude',
+            type: 'text',
+            check: check_reg_exp,
+        },
     ];
-    $scope.page_size = 250;
-    $scope.page = 1;
-    $scope.set_page = function(p){
-        if (p < 1)
-            p = 1;
-        if (p*$scope.page_size>$scope.proxies.length)
-            p = Math.ceil($scope.proxies.length/$scope.page_size);
-        $scope.page = p;
+    var default_cols = {
+        port: true,
+        _status: true,
+        zone: true,
+        country: true,
+        city: true,
+        state: true,
+        sticky_ip: true,
     };
-    $scope.columns = opt_columns.filter(function(col){
-        return ['port', 'country', 'asn', 'city', 'dns', 'pool_size', 'sticky_ip', 'max_requests']
-        .indexOf(col.key)!=-1;
-    });
+    $scope.cols_conf = JSON.parse(
+        $window.localStorage.getItem('columns'))||_.cloneDeep(default_cols);
+    $scope.$watch('cols_conf', function(){
+        $scope.columns = opt_columns.filter(function(col){
+            return col.key.match(/^_/) || $scope.cols_conf[col.key]; });
+    }, true);
+    var apply_consts = function(data){
+        iface_opts = data.iface.values;
+        zone_opts = data.zone.values;
+        country_opts = data.country.values;
+        pool_type_opts = data.pool_type.values;
+        dns_opts = prepare_opts(data.dns.values);
+        log_opts = data.log.values;
+        debug_opts = data.debug.values;
+    };
+    $scope.$on('consts', function(e, data){ apply_consts(data.proxy); });
+    if ($scope.$parent.consts)
+        apply_consts($scope.$parent.consts.proxy);
+    $scope.zones = {};
+    $scope.selected_proxies = {};
+    $scope.showed_status_proxies = {};
+    $scope.pagination = {page: 1, per_page: 10};
+    $scope.set_page = function(){
+        var page = $scope.pagination.page;
+        var per_page = $scope.pagination.per_page;
+        if (page < 1)
+            page = 1;
+        if (page*per_page>$scope.proxies.length)
+            page = Math.ceil($scope.proxies.length/per_page);
+        $scope.pagination.page = page;
+    };
     $proxies.subscribe(function(proxies){
         $scope.proxies = proxies;
-        $scope.set_page($scope.page);
+        $scope.set_page();
+        proxies.forEach(function(p){
+            $scope.showed_status_proxies[p.port] =
+                $scope.showed_status_proxies[p.port]&&p._status_details.length;
+        });
     });
-    /*
-    don't allow proxies to be deleted
-    $scope.delete_proxy = function(proxy){
+    $scope.delete_proxies = function(){
         $scope.$parent.$parent.confirmation = {
             text: 'Are you sure you want to delete the proxy?',
             confirmed: function(){
-                $http.delete('/api/proxies/'+proxy.port).then(function(){
-                    $proxies.update();
-                });
+                var selected = $scope.get_selected_proxies();
+                var promises = $scope.proxies
+                    .filter(function(p){
+                        return p.proxy_type=='persist'
+                            && selected.includes(p.port);
+                    }).map(function(p){
+                        return $http.delete('/api/proxies/'+p.port); });
+                $scope.selected_proxies = {};
+                $q.all(promises).then(function(){ return $proxies.update(); });
             },
         };
         $window.$('#confirmation').modal();
     };
-    */
     $scope.refresh_sessions = function(proxy){
-        $http.post('/api/refresh_sessions/'+proxy.port).then(function(){
-            $proxies.update();
-        });
-    };
-    $scope.show_stats = function(proxy){
-        $scope.selected_proxy = proxy;
-        var stats = $scope.selected_proxy.stats;
-        var total = stats.total;
-        $scope.requests = [total.active_requests];
-        $scope.requests_series = ['Active requests'];
-        $scope.codes = total.status.values;
-        $scope.codes_series = total.status.codes;
-        $scope.labels = stats.ticks;
-        $scope.options = {
-            animation: {duration: 0},
-            elements: {line: {borderWidth: 0.5}, point: {radius: 0}},
-            scales: {
-                xAxes: [{
-                    display: false,
-                }],
-                yAxes: [{
-                    position: 'right',
-                    gridLines: {display: false},
-                    ticks: {beginAtZero: true, suggestedMax: 6},
-                }],
-            },
-        };
-        $scope.codes_options = _.merge({elements: {line: {fill: false}},
-            legend: {display: true, labels: {boxWidth: 6}},
-            grindLines: {display: false}}, $scope.options);
-        $scope.max_values = total.max;
-        $scope.chart_indicator = chart_indicator;
-        $scope.chart_mousemove = chart_mousemove;
-        $scope.chart_x = {requests: 0, codes: 0};
-        $scope.chart_time = {requests: 0, codes: 0};
-        setTimeout(function(){
-            var charts = [
-                {
-                    name: 'requests',
-                    labels: $scope.labels,
-                    data: $scope.requests,
-                    series: $scope.requests_series,
-                    options: $scope.options,
-                },
-                {
-                    name: 'codes',
-                    labels: $scope.labels,
-                    data: $scope.codes,
-                    series: $scope.codes_series,
-                    options: $scope.codes_options,
-                },
-            ];
-            charts.forEach(function(chart){
-                var canvas = chart_container(chart.name);
-                var params = {
-                    type: 'line',
-                    data: chart_data(chart),
-                    options: chart.options,
-                };
-                canvas.att_chart_pars = chart;
-                canvas.att_chart = new $window.Chart(canvas, params);
-                canvas.att_scope = $scope;
-            });
-        }, 0);
-        $window.$('#stats').modal();
+        $http.post('/api/refresh_sessions/'+proxy.port)
+        .then(function(){ return $proxies.update(); });
     };
     $scope.show_history = function(proxy){
         $scope.history_dialog = [{port: proxy.port}];
     };
     $scope.show_pool = function(proxy){
-        $scope.pool_dialog = [{port: proxy.port}];
+        $scope.pool_dialog = [{
+            port: proxy.port,
+            sticky_ip: proxy.sticky_ip,
+            pool_size: proxy.pool_size,
+        }];
     };
-    $scope.show_iface_ips = function(proxy){
-        $scope.iface_ips_dialog = [{port: proxy.port, ips: proxy._iface_ips}];
+    $scope.add_proxy = function(){
+        $scope.proxy_dialog = [{proxy: {}}];
     };
-    /*
-    no edit
-    $scope.edit_proxy = function(proxy, duplicate){
-        $scope.proxy_dialog = [{proxy: proxy||{}, duplicate: duplicate}];
+    $scope.edit_proxy = function(duplicate){
+        var port = $scope.get_selected_proxies()[0];
+        var proxy = $scope.proxies.filter(function(p){ return p.port==port; });
+        $scope.proxy_dialog = [{proxy: proxy[0].config, duplicate: duplicate}];
     };
-    */
-    /*
-    no inline edit
+    $scope.edit_cols = function(){
+        $scope.columns_dialog = [{
+            columns: opt_columns.filter(function(col){
+                return !col.key.match(/^_/);
+            }),
+            cols_conf: $scope.cols_conf,
+            default_cols: default_cols,
+        }];
+    };
     $scope.inline_edit_click = function(proxy, col){
-        if (!proxy.persist)
+        if (proxy.proxy_type!='persist'
+            || !$scope.is_valid_field(proxy, col.key))
+        {
             return;
+        }
         switch (col.type)
         {
         case 'number':
         case 'text':
+        case 'autocomplete':
         case 'options': proxy.edited_field = col.key; break;
         case 'boolean':
             var config = _.cloneDeep(proxy.config);
             config[col.key] = !proxy[col.key];
-            config.persist = true;
+            config.proxy_type = 'persist';
             $http.put('/api/proxies/'+proxy.port, {proxy: config}).then(
                 function(){ $proxies.update(); });
             break;
@@ -862,60 +1309,191 @@ function proxies($scope, $http, $proxies, $window){
     };
     $scope.inline_edit_input = function(proxy, col, event){
         if (event.which==27)
-            return $scope.inline_edit_blur(proxy);
+            return $scope.inline_edit_blur(proxy, col);
         var v = event.currentTarget.value;
         var p = $window.$(event.currentTarget).closest('.proxies-table-input');
-        if (col.check(v))
+        if (col.check(v, proxy.config))
             p.removeClass('has-error');
         else
-        {
-            p.addClass('has-error');
-            return;
-        }
+            return p.addClass('has-error');
         if (event.which!=13)
             return;
-        if (col.type=='number')
-            v = v.trim()=='' ? null : +v;
-        if (col.type=='text')
-            v = v.trim();
-        if (proxy.config[col.key]==v)
-            return $scope.inline_edit_blur(proxy);
+        v = v.trim();
+        if (proxy.original[col.key]!==undefined &&
+            proxy.original[col.key].toString()==v)
+        {
+            return $scope.inline_edit_blur(proxy, col);
+        }
+        if (col.type=='number'&&v)
+            v = +v;
         var config = _.cloneDeep(proxy.config);
         config[col.key] = v;
-        config.persist = true;
-        $http.put('/api/proxies/'+proxy.port, {proxy: config}).then(
-            function(){ $proxies.update(); });
+        config.proxy_type = 'persist';
+        $http.post('/api/proxy_check/'+proxy.port, config)
+        .then(function(res){
+            var errors = res.data.filter(function(i){ return i.lvl=='err'; });
+            if (!errors.length)
+                return $http.put('/api/proxies/'+proxy.port, {proxy: config});
+        })
+        .then(function(res){
+            if (res)
+                $proxies.update();
+        });
     };
     $scope.inline_edit_select = function(proxy, col, event){
         if (event.which==27)
-            return $scope.inline_edit_blur(proxy);
+            return $scope.inline_edit_blur(proxy, col);
     };
-    $scope.inline_edit_select_change = function(proxy, col, v){
-        if (proxy.config[col.key]==v)
-            return $scope.inline_edit_blur(proxy);
+    $scope.inline_edit_set = function(proxy, col, v){
+        if (proxy.original[col.key]===v||proxy.original[col.key]==v&&v!==true)
+            return $scope.inline_edit_blur(proxy, col);
         var config = _.cloneDeep(proxy.config);
         config[col.key] = v;
-        config.persist = true;
+        config.proxy_type = 'persist';
+        if (col.key=='country')
+            config.state = config.city = '';
+        if (col.key=='state')
+            config.city = '';
         $http.put('/api/proxies/'+proxy.port, {proxy: config}).then(
             function(){ $proxies.update(); });
     };
-    $scope.inline_edit_blur = function(proxy){
-        proxy.edited_field = '';
+    $scope.inline_edit_blur = function(proxy, col){
+        $timeout(function(){
+            proxy.config[col.key] = proxy.original[col.key];
+            if (proxy.edited_field == col.key)
+                proxy.edited_field = '';
+        }, 100);
     };
-    */
-    $scope.reset_total_stats = function(proxy){
-        $http.put('/api/proxies/'+proxy.port, {reset_total_stats: true});
+    $scope.inline_edit_start = function(proxy, col){
+        if (!proxy.original)
+            proxy.original = _.cloneDeep(proxy.config);
+        if (col.key=='session'&&proxy.config.session===true)
+            proxy.config.session='';
+    };
+    $scope.get_selected_proxies = function(){
+        return Object.keys($scope.selected_proxies)
+            .filter(function(p){ return $scope.selected_proxies[p]; })
+            .map(function(p){ return +p; });
+    };
+    $scope.option_key = function(col, val){
+        var opt = col.options().find(function(o){ return o.value==val; });
+        return opt&&opt.key;
+    };
+    $scope.toggle_proxy_status_details = function(proxy){
+        if (proxy._status_details.length)
+        {
+            $scope.showed_status_proxies[proxy.port] =
+                !$scope.showed_status_proxies[proxy.port];
+        }
+    };
+    $scope.get_colspans = function(){
+        for (var i = 0; i<$scope.columns.length; i++)
+        {
+            if ($scope.columns[i].key=='_status')
+                return [i+1, $scope.columns.length-i+1];
+        }
+        return [0, 0];
+    };
+    $scope.get_column_tooltip = function(proxy, col){
+        if (proxy.proxy_type != 'persist')
+            return 'This proxy\'s settings cannot be changed';
+        if (!$scope.is_valid_field(proxy, col.key))
+        {
+            return 'You don\'t have \''+ col.key+'\' permission.<br>'
+            +'Please contact your success manager.';
+        }
+        if (col.key=='country')
+            return $scope.option_key(col, proxy[col.key]);
+        if (col.key == 'session' && proxy.session === true)
+                return 'Random';
+        if (['state', 'city'].includes(col.key) &&
+            [undefined, '', '*'].includes(proxy.country))
+        {
+            return 'Set the country first';
+        }
+        var config_val = proxy.config[col.key];
+        var real_val = proxy[col.key];
+        if (real_val&&real_val!==config_val)
+            return 'Set non-default value';
+        return 'Change value';
+    };
+    $scope.is_valid_field = function(proxy, name){
+        return is_valid_field(proxy, name, $scope.$parent.consts.proxy.zone);
+    };
+    $scope.starts_with = function(actual, expected){
+        return expected.length>1 &&
+            actual.toLowerCase().startsWith(expected.toLowerCase());
+    };
+    $scope.typeahead_on_select = function(proxy, col, item){
+        if (col.key=='city')
+        {
+            var config = _.cloneDeep(proxy.config);
+            config.city = item.key;
+            config.state = item.region||'';
+            $http.put('/api/proxies/'+proxy.port, {proxy: config}).then(
+                function(){ $proxies.update(); });
+        }
+    };
+    $scope.on_page_change = function(){
+        $scope.selected_proxies = {}; };
+    var load_regions = function(country){
+        if (!country||country=='*')
+            return [];
+        return region_opts[country] || (region_opts[country] =
+            $http.get('/api/regions/'+country.toUpperCase()).then(function(r){
+                return region_opts[country] = r.data; }));
+    };
+    var load_cities = function(proxy){
+        var country = proxy.country.toUpperCase();
+        var state = proxy.state;
+        if (!country||country=='*')
+            return [];
+        if (!cities_opts[country])
+        {
+            cities_opts[country] = [];
+            $http.get('/api/cities/'+country).then(function(res){
+                return cities_opts[country] = res.data.map(function(city){
+                    if (city.region)
+                        city.value = city.value+' ('+city.region+')';
+                    return city;
+                });
+            });
+        }
+        var options = cities_opts[country];
+        if (state&&state!='*')
+            options = options.filter(function(i){ return i.region==state; });
+        return options;
+
     };
 }
 
-module.controller('history', history);
-history.$inject = ['$scope', '$http', '$filter', '$window'];
-function history($scope, $http, $filter, $window){
+module.controller('history', History);
+History.$inject = ['$scope', '$http', '$window'];
+function History($scope, $http, $window){
+    $scope.hola_headers = [];
+    $http.get('/api/hola_headers').then(function(h){
+        $scope.hola_headers = h.data;
+    });
     $scope.init = function(locals){
         var loader_delay = 100;
+        var timestamp_changed_by_select = false;
         $scope.initial_loading = true;
         $scope.port = locals.port;
         $scope.show_modal = function(){ $window.$('#history').modal(); };
+        $http.get('/api/history_context/'+locals.port).then(function(c){
+            $scope.history_context = c.data;
+        });
+        $scope.periods = [
+            {label: 'all time', value: '*'},
+            {label: '1 year', value: {y: 1}},
+            {label: '3 months', value: {M: 3}},
+            {label: '2 months', value: {M: 2}},
+            {label: '1 month', value: {M: 1}},
+            {label: '1 week', value: {w: 1}},
+            {label: '3 days', value: {d: 3}},
+            {label: '1 day', value: {d: 1}},
+            {label: 'custom', value: ''},
+        ];
         $scope.fields = [
             {
                 field: 'url',
@@ -963,9 +1541,16 @@ function history($scope, $http, $filter, $window){
                 type: 'string',
                 filter_label: 'IP or substring',
             },
+            {
+                field: 'context',
+                title: 'Context',
+                type: 'options',
+                filter_label: 'Request context',
+            },
         ];
         $scope.sort_field = 'timestamp';
         $scope.sort_asc = false;
+        $scope.virtual_filters = {period: $scope.periods[0].value};
         $scope.filters = {
             url: '',
             method: '',
@@ -979,16 +1564,21 @@ function history($scope, $http, $filter, $window){
             country: '',
             super_proxy: '',
             proxy_peer: '',
+            context: '',
         };
-        $scope.page = 1;
-        $scope.page_size = 10;
-        $scope.update = function(preserving_page, export_type){
-            if (!preserving_page)
-                $scope.page = 1;
-            var params = {
-                count: export_type=='all' ? -1 : $scope.page*$scope.page_size,
-                sort: $scope.sort_field,
-            };
+        $scope.pagination = {
+            page: 1,
+            per_page: 10,
+            total: 1,
+        };
+        $scope.update = function(export_type){
+            var params = {sort: $scope.sort_field};
+            if (!export_type)
+            {
+                params.limit = $scope.pagination.per_page;
+                params.skip = ($scope.pagination.page-1)
+                    *$scope.pagination.per_page;
+            }
             if (!$scope.sort_asc)
                 params.sort_desc = 1;
             if ($scope.filters.url)
@@ -1017,160 +1607,156 @@ function history($scope, $http, $filter, $window){
                 params.super_proxy = $scope.filters.super_proxy;
             if ($scope.filters.proxy_peer)
                 params.proxy_peer = $scope.filters.proxy_peer;
-            if ($scope.archive>-1)
-                params.archive = $scope.archive_timestamps[$scope.archive];
+            if ($scope.filters.context)
+                params.context = $scope.filters.context;
             var params_arr = [];
             for (var param in params)
                 params_arr.push(param+'='+encodeURIComponent(params[param]));
-            var url = '/api/'+(export_type ? 'har' : 'history')+'/'+locals.port
-            +'?'+params_arr.join('&');
+            var url = '/api/history';
+            if (export_type=='har'||export_type=='csv')
+                url += '_'+export_type;
+            url += '/'+locals.port+'?'+params_arr.join('&');
             if (export_type)
-                $window.location = url;
-            else
-            {
-                $scope.loading = new Date().getTime();
-                setTimeout(function(){ $scope.$apply(); }, loader_delay);
-                $http.get(url).then(function(history){
-                    history = history.data;
-                    $scope.initial_loading = false;
-                    $scope.loading = false;
-                    $scope.loading_page = false;
-                    $scope.history = history.map(function(r){
-                        var alerts = [];
-                        var disabled_alerts = [];
-                        var add_alert = function(alert){
-                            if (r.method=='CONNECT'
-                                ||request_headers.host=='lumtest.com')
-                            {
-                                return;
-                            }
-                            if (localStorage.getItem(
-                                'request-alert-disabled-'+alert.type))
-                            {
-                                disabled_alerts.push(alert);
-                            }
-                            else
-                                alerts.push(alert);
-                        };
-                        var request_headers = JSON.parse(r.request_headers);
-                        if (!request_headers['user-agent'])
+                return $window.location = url;
+            $scope.loading = new Date().getTime();
+            setTimeout(function(){ $scope.$apply(); }, loader_delay);
+            $http.get(url).then(function(res){
+                $scope.pagination.total_items = res.data.total;
+                var history = res.data.items;
+                $scope.initial_loading = false;
+                $scope.loading = false;
+                $scope.history = history.map(function(r){
+                    var alerts = [];
+                    var disabled_alerts = [];
+                    var add_alert = function(alert){
+                        if (localStorage.getItem(
+                            'request-alert-disabled-'+alert.type))
                         {
-                            add_alert({
-                                type: 'agent_empty',
-                                title: 'Empty user agent',
-                                description: 'The User-Agent header '
-                                    +'is not set to any value.',
-                            });
+                            disabled_alerts.push(alert);
                         }
-                        else if (!request_headers['user-agent'].match(
-                            /^Mozilla\//))
-                        {
-                            add_alert({
-                                type: 'agent_suspicious',
-                                title: 'Suspicious user agent',
-                                description: 'The User-Agent header is set to '
-                                    +'a value not corresponding to any of the '
-                                    +'major web browsers.',
-                            });
-                        }
-                        if (!request_headers.accept)
-                        {
-                            add_alert({
-                                type: 'accept_empty',
-                                title: 'Empty accept types',
-                                description: 'The Accept header is not set to '
-                                    +'any value.',
-                            });
-                        }
-                        if (!request_headers['accept-encoding'])
-                        {
-                            add_alert({
-                                type: 'accept_encoding_empty',
-                                title: 'Empty accept encoding',
-                                description: 'The Accept-Encoding header is '
-                                    +'not set to any value.',
-                            });
-                        }
-                        if (!request_headers['accept-language'])
-                        {
-                            add_alert({
-                                type: 'accept_language_empty',
-                                title: 'Empty accept language',
-                                description: 'The Accept-Language header is '
-                                    +'not set to any value.',
-                            });
-                        }
-                        if (request_headers.connection != 'keep-alive')
-                        {
-                            add_alert({
-                                type: 'connection_suspicious',
-                                title: 'Suspicious connection type',
-                                description: 'The Connection header is not '
-                                    +'set to "keep-alive".',
-                            });
-                        }
-                        if (r.method=='GET'
-                            &&!r.url.match(/^https?:\/\/[^\/\?]+\/?$/)
-                            &&!r.url.match(/[^\w]favicon[^\w]/)
-                            &&!request_headers.referer)
-                        {
-                            add_alert({
-                                type: 'referer_empty',
-                                title: 'Empty referrer',
-                                description: 'The Referer header is not set '
-                                    +'even though the requested URL is not '
-                                    +'the home page of the site.',
-                            });
-                        }
-                        r.alerts = alerts;
-                        r.disabled_alerts = disabled_alerts;
+                        else
+                            alerts.push(alert);
+                    };
+                    var raw_headers = JSON.parse(r.request_headers);
+                    var request_headers = {};
+                    for (var h in raw_headers)
+                        request_headers[h.toLowerCase()] = raw_headers[h];
+                    r.request_headers = request_headers;
+                    r.response_headers = JSON.parse(r.response_headers);
+                    r.alerts = alerts;
+                    r.disabled_alerts = disabled_alerts;
+                    if (r.url
+                        .match(/^(https?:\/\/)?\d+\.\d+\.\d+\.\d+[$\/\?:]/))
+                    {
+                        add_alert({
+                            type: 'ip_url',
+                            title: 'IP URL',
+                            description: 'The url uses IP and not '
+                                +'hostname, it will not be served from the'
+                                +' proxy peer. It could mean a resolve '
+                                +'configuration issue when using SOCKS.',
+                        });
+                    }
+                    if (r.method=='CONNECT'
+                        ||request_headers.host=='lumtest.com'
+                        ||r.url.match(/^https?:\/\/lumtest.com[$\/\?]/))
+                    {
                         return r;
-                    });
-                    var history_cnt = $scope.history.length;
-                    var timings = ['node_latency', 'response_time', 'elapsed'];
-                    var timings_val = {};
-                    var timing, i;
-                    for (i=0; i<timings.length; i++)
-                    {
-                        timing = timings[i];
-                        timings_val[timing] = {
-                            min: Number.MAX_VALUE,
-                            max: -1,
-                            sum: 0,
-                        };
                     }
-                    $scope.history.forEach(function(r){
-                        for (var i=0; i<timings.length; i++)
-                        {
-                            var timing = timings[i];
-                            timings_val[timing].min = Math.min(
-                                timings_val[timing].min, r[timing]);
-                            timings_val[timing].max = Math.max(
-                                timings_val[timing].max, r[timing]);
-                            timings_val[timing].sum += r[timing];
-                        }
-                    });
-                    $scope.timings = [];
-                    for (i=0; i<timings.length; i++)
+                    if (!request_headers['user-agent'])
                     {
-                        timing = timings[i];
-                        $scope.timings.push([
-                            timing.replace(/_/g, ' '),
-                            timings_val[timing].min,
-                            Math.round(timings_val[timing].sum/history_cnt),
-                            timings_val[timing].max,
-                        ]);
+                        add_alert({
+                            type: 'agent_empty',
+                            title: 'Empty user agent',
+                            description: 'The User-Agent header '
+                                +'is not set to any value.',
+                        });
                     }
+                    else if (!request_headers['user-agent'].match(
+                        /^Mozilla\//))
+                    {
+                        add_alert({
+                            type: 'agent_suspicious',
+                            title: 'Suspicious user agent',
+                            description: 'The User-Agent header is set to '
+                                +'a value not corresponding to any of the '
+                                +'major web browsers.',
+                        });
+                    }
+                    if (!request_headers.accept)
+                    {
+                        add_alert({
+                            type: 'accept_empty',
+                            title: 'Empty accept types',
+                            description: 'The Accept header is not set to '
+                                +'any value.',
+                        });
+                    }
+                    if (!request_headers['accept-encoding'])
+                    {
+                        add_alert({
+                            type: 'accept_encoding_empty',
+                            title: 'Empty accept encoding',
+                            description: 'The Accept-Encoding header is '
+                                +'not set to any value.',
+                        });
+                    }
+                    if (!request_headers['accept-language'])
+                    {
+                        add_alert({
+                            type: 'accept_language_empty',
+                            title: 'Empty accept language',
+                            description: 'The Accept-Language header is '
+                                +'not set to any value.',
+                        });
+                    }
+                    if (request_headers.connection != 'keep-alive')
+                    {
+                        add_alert({
+                            type: 'connection_suspicious',
+                            title: 'Suspicious connection type',
+                            description: 'The Connection header is not '
+                                +'set to "keep-alive".',
+                        });
+                    }
+                    if (r.method=='GET'
+                        &&!r.url.match(/^https?:\/\/[^\/\?]+\/?$/)
+                        &&!r.url.match(/[^\w]favicon[^\w]/)
+                        &&!request_headers.referer)
+                    {
+                        add_alert({
+                            type: 'referer_empty',
+                            title: 'Empty referrer',
+                            description: 'The Referer header is not set '
+                                +'even though the requested URL is not '
+                                +'the home page of the site.',
+                        });
+                    }
+                    var sensitive_headers = [];
+                    for (var i in $scope.hola_headers)
+                    {
+                        if (request_headers[$scope.hola_headers[i]])
+                            sensitive_headers.push($scope.hola_headers[i]);
+                    }
+                    if (sensitive_headers.length)
+                    {
+                        add_alert({
+                            type: 'sensitive_header',
+                            title: 'Sensitive request header',
+                            description: (sensitive_headers.length>1 ?
+                                'There are sensitive request headers' :
+                                'There is sensitive request header')
+                                +' in the request: '
+                                +sensitive_headers.join(', '),
+                        });
+                    }
+                    return r;
                 });
-            }
+            });
         };
         $scope.show_loader = function(){
             return $scope.loading
             &&new Date().getTime()-$scope.loading>=loader_delay;
-        };
-        $scope.show_next = function(){
-            return $scope.loading_page||$scope.history&&
-            $scope.history.length>=$scope.page*$scope.page_size;
         };
         $scope.sort = function(field){
             if ($scope.sort_field==field.field)
@@ -1194,6 +1780,8 @@ function history($scope, $http, $filter, $window){
             }
             else if (field.field=='country')
                 options = $scope.$parent.$parent.consts.proxy.country.values;
+            else if (field.field=='context')
+                options = $scope.history_context;
             $scope.filter_dialog = [{
                 field: field,
                 filters: $scope.filters,
@@ -1221,63 +1809,68 @@ function history($scope, $http, $filter, $window){
             $scope.filters[field.field] = '';
             $scope.update();
         };
-        $scope.details = function(row){
-            $scope.details_dialog = [{
-                row: row,
-                fields: $scope.fields,
-                update: $scope.update,
-            }];
-            setTimeout(function(){
-                $window.$('#history_details').modal();
-            }, 0);
-        };
-        $scope.next = function(){
-            $scope.loading_page = true;
-            $scope.page++;
-            $scope.update(true);
+        $scope.toggle_prop = function(row, prop){
+            row[prop] = !row[prop];
         };
         $scope.export_type = 'visible';
-        $scope.export = function(){
-            $scope.update(true, $scope.export_type);
-        };
-        $scope.archive = -1;
-        $http.get('/api/archive_timestamps').then(function(timestamps){
-            $scope.archive_timestamps = timestamps.data.timestamps;
-        });
-        $scope.archive_name = function(index){
-            if (!$scope.archive_timestamps)
-                return '';
-            var date = function(index){
-                return moment($scope.archive_timestamps[index])
-                .format('YYYY/MM/DD');
-            };
-            if (index==$scope.archive_timestamps.length-1)
-                return 'Up to '+date(index);
-            return 'From '+date(index+1)+' until '
-            +(index==-1 ? 'now' : date(index));
-        };
-        $scope.show_archives = function(){
-            var sel = $window.$('#history_archives select');
-            sel.val($scope.archive);
-            $window.$('#history_archives').one('shown.bs.modal', function(){
-                sel.focus();
-            }).modal();
-        };
-        $scope.archive_apply = function(){
-            var val = +$window.$('#history_archives select').val();
-            if ($scope.archive!=val)
+        $scope.disable_alert = function(row, alert){
+            localStorage.setItem('request-alert-disabled-'+alert.type, 1);
+            for (var i=0; i<row.alerts.length; i++)
             {
-                $scope.archive = val;
-                $scope.update();
+                if (row.alerts[i].type==alert.type)
+                {
+                    row.disabled_alerts.push(row.alerts.splice(i, 1)[0]);
+                    break;
+                }
             }
         };
+        $scope.enable_alert = function(row, alert){
+            localStorage.removeItem('request-alert-disabled-'+alert.type);
+            for (var i=0; i<row.disabled_alerts.length; i++)
+            {
+                if (row.disabled_alerts[i].type==alert.type)
+                {
+                    row.alerts.push(row.disabled_alerts.splice(i, 1)[0]);
+                    break;
+                }
+            }
+        };
+        $scope.on_period_change = function(){
+            var period = $scope.virtual_filters.period;
+            if (!period)
+                return;
+            if (period!='*')
+            {
+                var from = moment().subtract($scope.virtual_filters.period)
+                .format('YYYY/MM/DD');
+                var to = moment().format('YYYY/MM/DD');
+                $scope.filters.timestamp_min = from;
+                $scope.filters.timestamp_max = to;
+                $scope.filters.timestamp = from+'-'+to;
+            }
+            else
+            {
+                $scope.filters.timestamp_min = null;
+                $scope.filters.timestamp_max = null;
+                $scope.filters.timestamp = '';
+            }
+            timestamp_changed_by_select = true;
+            $scope.update();
+        };
+        $scope.$watch('filters.timestamp', function(after){
+            if (!after)
+                $scope.virtual_filters.period = '*';
+            else if (!timestamp_changed_by_select)
+                $scope.virtual_filters.period = '';
+            timestamp_changed_by_select = false;
+        });
         $scope.update();
     };
 }
 
-module.controller('history_filter', history_filter);
-history_filter.$inject = ['$scope', '$window'];
-function history_filter($scope, $window){
+module.controller('history_filter', History_filter);
+History_filter.$inject = ['$scope', '$window'];
+function History_filter($scope, $window){
     $scope.init = function(locals){
         $scope.field = locals.field;
         var field = locals.field.field;
@@ -1329,106 +1922,123 @@ function history_filter($scope, $window){
     };
 }
 
-module.controller('history_details', history_details);
-history_details.$inject = ['$scope'];
-function history_details($scope){
-    $scope.init = function(locals){
-        $scope.row = locals.row;
-        var request_headers = JSON.parse($scope.row.request_headers);
-        $scope.request_headers = Object.keys(request_headers).map(
-            function(key){
-                return [key, request_headers[key]];
-            });
-        var response_headers = JSON.parse($scope.row.response_headers);
-        $scope.response_headers = Object.keys(response_headers).map(
-            function(key){
-                return [key, response_headers[key]];
-            });
-        $scope.timings = [
-            ['Proxy peer latency', $scope.row.node_latency+' ms'],
-            ['Response sent', $scope.row.response_time+' ms'],
-            ['Response received', $scope.row.elapsed+' ms'],
-        ];
-        $scope.alerts = $scope.row.alerts;
-        $scope.disabled_alerts = $scope.row.disabled_alerts;
-        $scope.fields = locals.fields;
-        $scope.disable_alert = function(type){
-            localStorage.setItem('request-alert-disabled-'+type, 1);
-            for (var i=0; i<$scope.alerts.length; i++)
-            {
-                if ($scope.alerts[i].type==type)
-                {
-                    $scope.disabled_alerts.push($scope.alerts[i]);
-                    $scope.alerts.splice(i, 1);
-                    break;
-                }
-            }
-            locals.update();
-        };
-        $scope.enable_alert = function(type){
-            localStorage.removeItem('request-alert-disabled-'+type);
-            for (var i=0; i<$scope.disabled_alerts.length; i++)
-            {
-                if ($scope.disabled_alerts[i].type==type)
-                {
-                    $scope.alerts.push($scope.disabled_alerts[i]);
-                    $scope.disabled_alerts.splice(i, 1);
-                    break;
-                }
-            }
-            locals.update();
-        };
-    };
-}
-
-module.controller('pool', pool);
-pool.$inject = ['$scope', '$http', '$window'];
-function pool($scope, $http, $window){
+module.controller('pool', Pool);
+Pool.$inject = ['$scope', '$http', '$window'];
+function Pool($scope, $http, $window){
     $scope.init = function(locals){
         $scope.port = locals.port;
+        $scope.pool_size = locals.pool_size;
+        $scope.sticky_ip = locals.sticky_ip;
+        $scope.pagination = {page: 1, per_page: 10};
         $scope.show_modal = function(){ $window.$('#pool').modal(); };
         $scope.update = function(refresh){
             $scope.pool = null;
             $http.get('/api/sessions/'+$scope.port+(refresh ? '?refresh' : ''))
-            .then(function(pool){
-                $scope.pool = pool.data;
+            .then(function(res){
+                $scope.pool = res.data.data;
             });
         };
         $scope.update();
     };
 }
 
-module.controller('iface_ips', iface_ips);
-iface_ips.$inject = ['$scope', '$window'];
-function iface_ips($scope, $window){
+module.controller('proxy', Proxy);
+Proxy.$inject = ['$scope', '$http', '$proxies', '$window', '$q'];
+function Proxy($scope, $http, $proxies, $window, $q){
     $scope.init = function(locals){
-        $scope.port = locals.port;
-        $scope.ips = locals.ips;
-        $scope.show_modal = function(){ $window.$('#iface_ips').modal(); };
-    };
-}
-
-module.controller('proxy', proxy);
-proxy.$inject = ['$scope', '$http', '$proxies', '$window'];
-function proxy($scope, $http, $proxies, $window){
-    $scope.init = function(locals){
+        var regions = {};
+        var cities = {};
+        $scope.consts = $scope.$parent.$parent.$parent.$parent.consts.proxy;
         $scope.port = locals.duplicate ? '' : locals.proxy.port;
-        $scope.form = _.cloneDeep(locals.proxy);
-        $scope.form.port = $scope.port;
-        if (!$scope.form.port||$scope.form.port=='')
+        var form = $scope.form = _.cloneDeep(locals.proxy);
+        form.port = $scope.port;
+        form.zone = form.zone||'';
+        form.debug = form.debug||'';
+        form.country = form.country||'';
+        form.state = form.state||'';
+        form.city = form.city||'';
+        form.dns = form.dns||'';
+        form.log = form.log||'';
+        form.ips = form.ips||[];
+        $scope.extra = {
+            reverse_lookup: '',
+            reverse_lookup_dns: form.reverse_lookup_dns,
+            reverse_lookup_file: form.reverse_lookup_file,
+            reverse_lookup_values:
+                (form.reverse_lookup_values||[]).join('\n'),
+        };
+        if ($scope.extra.reverse_lookup_dns)
+            $scope.extra.reverse_lookup = 'dns';
+        else if ($scope.extra.reverse_lookup_file)
+            $scope.extra.reverse_lookup = 'file';
+        else if ($scope.extra.reverse_lookup_values)
+            $scope.extra.reverse_lookup = 'values';
+        $scope.status = {};
+        var new_proxy = !form.port||form.port=='';
+        if (new_proxy)
         {
             var port = 24000;
+            var socks = form.socks;
             $scope.proxies.forEach(function(p){
                 if (p.port >= port)
                     port = p.port+1;
+                if (socks && p.socks==socks)
+                    socks++;
             });
-            $scope.form.port = port;
+            form.port = port;
+            form.socks = socks;
         }
-        $scope.consts = $scope.$parent.$parent.$parent.$parent.consts.proxy;
+        var def_proxy = form;
+        if (new_proxy)
+        {
+            def_proxy = {};
+            for (var key in $scope.consts)
+            {
+                if ($scope.consts[key].def!==undefined)
+                    def_proxy[key] = $scope.consts[key].def;
+            }
+        }
+        for (var p in presets)
+        {
+            if (presets[p].check(def_proxy))
+            {
+                form.preset = presets[p];
+                break;
+            }
+        }
+        $scope.apply_preset = function(){
+            form.preset.set(form);
+            if (form.session===true)
+            {
+                form.session_random = true;
+                form.session = '';
+            }
+            if (form.max_requests)
+            {
+                var max_requests = (''+form.max_requests).split(':');
+                form.max_requests_start = +max_requests[0];
+                form.max_requests_end = +max_requests[1];
+            }
+            if (!form.max_requests)
+                form.max_requests_start = 0;
+            if (form.session_duration)
+            {
+                var session_duration = (''+form.session_duration)
+                    .split(':');
+                form.duration_start = +session_duration[0];
+                form.duration_end = +session_duration[1];
+            }
+        };
+        $scope.apply_preset();
+        $scope.form_errors = {};
         $scope.defaults = {};
         $http.get('/api/defaults').then(function(defaults){
             $scope.defaults = defaults.data;
         });
+        $scope.regions = [];
+        $scope.cities = [];
+        $scope.get_zones_names = function(){
+            return Object.keys($scope.zones); };
         $scope.show_modal = function(){
             $window.$('#proxy').one('shown.bs.modal', function(){
                 $window.$('#proxy-field-port').select().focus();
@@ -1452,76 +2062,297 @@ function proxy($scope, $http, $proxies, $window){
                 });
             }).modal();
         };
-        $scope.binary_changed = function(proxy, field, value){
-            proxy[field] = {'yes': true, 'no': false, 'default': ''}[value];
+        $scope.is_show_allocated_ips = function(){
+            var zone = $scope.consts.zone.values.filter(function(z){
+                return z.value==form.zone; })[0];
+            var plan = (zone.plans||[]).slice(-1)[0];
+            return (plan&&plan.type||zone.type)=='static';
         };
-        $scope.save = function(proxy){
-            $window.$('#proxy').modal('hide');
-            proxy.persist = true;
-            var data = {proxy: proxy};
-            var promise;
-            var edit = $scope.port&&!locals.duplicate;
-            if (edit)
-                promise = $http.put('/api/proxies/'+$scope.port, data);
-            else
-                promise = $http.post('/api/proxies', data);
-            promise.then(function(){
-                $proxies.update();
-                $window.localStorage.setItem('quickstart-'+
-                    (edit ? 'edit' : 'create')+'-proxy', true);
+        $scope.show_allocated_ips = function(){
+            var zone = form.zone;
+            var key = form.password||'';
+            var modals = $scope.$parent.$parent.$parent.$parent;
+            modals.allocated_ips = {
+                ips: [],
+                loading: true,
+                random_ip: function(){
+                    modals.allocated_ips.ips.forEach(function(item){
+                        item.checked = false; });
+                    form.ips = [];
+                    form.pool_size = 0;
+                },
+                toggle_ip: function(item){
+                    var index = form.ips.indexOf(item.ip);
+                    if (item.checked && index<0)
+                        form.ips.push(item.ip);
+                    else if (!item.checked && index>-1)
+                        form.ips.splice(index, 1);
+                    form.pool_size = form.ips.length;
+                },
+                zone: zone,
+            };
+            $window.$('#allocated_ips').modal();
+            $http.get('/api/allocated_ips?zone='+zone+'&key='+key)
+            .then(function(res){
+                modals.allocated_ips.ips = res.data.ips.map(function(ip_port){
+                    var ip = ip_port.split(':')[0];
+                    return {ip: ip, checked: form.ips.includes(ip)};
+                });
+                modals.allocated_ips.loading = false;
             });
+        };
+        $scope.binary_changed = function(proxy, field, value){
+            proxy[field] = {'yes': true, 'no': false, 'default': ''}[value]; };
+        $scope.update_regions_and_cities = function(is_init){
+            if (!is_init)
+                $scope.form.region = $scope.form.city = '';
+            $scope.regions = [];
+            $scope.cities = [];
+            var country = ($scope.form.country||'').toUpperCase();
+            if (!country||country=='*')
+                return;
+            if (regions[country])
+                $scope.regions = regions[country];
+            else
+            {
+                regions[country] = [];
+                $http.get('/api/regions/'+country).then(function(res){
+                    $scope.regions = regions[country] = res.data; });
+            }
+            if (cities[country])
+                $scope.cities = cities[country];
+            else
+            {
+                cities[country] = [];
+                $http.get('/api/cities/'+country).then(function(res){
+                    cities[country] = res.data.map(function(city){
+                        if (city.region)
+                            city.value = city.value+' ('+city.region+')';
+                        return city;
+                    });
+                    $scope.cities = cities[country];
+                    $scope.update_cities();
+                });
+            }
+        };
+        $scope.update_cities = function(){
+            var country = $scope.form.country.toUpperCase();
+            var state = $scope.form.state;
+            if (state==''||state=='*')
+            {
+                $scope.form.city = '';
+                $scope.cities = cities[country];
+            }
+            else
+            {
+                $scope.cities = cities[country].filter(function(item){
+                    return !item.region || item.region==state; });
+                var exist = $scope.cities.filter(function(item){
+                    return item.key==$scope.form.city; }).length>0;
+                if (!exist)
+                    $scope.form.city = '';
+            }
+        };
+        $scope.update_region_by_city = function(city){
+            if (city.region)
+                $scope.form.state = city.region;
+            $scope.update_cities();
+        };
+        $scope.save = function(model){
+            var proxy = angular.copy(model);
+            delete proxy.preset;
+            for (var field in proxy)
+            {
+                if (!$scope.is_valid_field(field) || proxy[field]===null)
+                    proxy[field] = '';
+            }
+            var make_int_range = function(start, end){
+                var s = parseInt(start, 10)||0;
+                var e = parseInt(end, 10)||0;
+                return s&&e ? [s, e].join(':') : s||e;
+            };
+            var effective = function(prop){
+                return proxy[prop]===undefined ?
+                    $scope.defaults[prop] : proxy[prop];
+            };
+            if (proxy.session_random)
+                proxy.session = true;
+            proxy.max_requests = make_int_range(proxy.max_requests_start,
+                proxy.max_requests_end);
+            delete proxy.max_requests_start;
+            delete proxy.max_requests_end;
+            proxy.session_duration = make_int_range(proxy.duration_start,
+                proxy.duration_end);
+            delete proxy.duration_start;
+            delete proxy.duration_end;
+            proxy.history = effective('history');
+            proxy.ssl = effective('ssl');
+            proxy.max_requests = effective('max_requests');
+            proxy.session_duration = effective('session_duration');
+            proxy.keep_alive = effective('keep_alive');
+            proxy.pool_size = effective('pool_size');
+            proxy.proxy_type = 'persist';
+            proxy.reverse_lookup_dns = '';
+            proxy.reverse_lookup_file = '';
+            proxy.reverse_lookup_values = '';
+            if ($scope.extra.reverse_lookup=='dns')
+                proxy.reverse_lookup_dns = true;
+            if ($scope.extra.reverse_lookup=='file')
+                proxy.reverse_lookup_file = $scope.extra.reverse_lookup_file;
+            if ($scope.extra.reverse_lookup=='values')
+            {
+                proxy.reverse_lookup_values =
+                    $scope.extra.reverse_lookup_values.split('\n');
+            }
+            model.preset.set(proxy);
+            var edit = $scope.port&&!locals.duplicate;
+            var save_inner = function(){
+                $scope.status.type = 'warning';
+                $scope.status.message = 'Saving the proxy...';
+                var promise = edit
+                    ? $http.put('/api/proxies/'+$scope.port, {proxy: proxy})
+                    : $http.post('/api/proxies/', {proxy: proxy});
+                var is_ok_cb = function(){
+                    $window.$('#proxy').modal('hide');
+                    $proxies.update();
+                    $window.localStorage.setItem('quickstart-'+
+                        (edit ? 'edit' : 'create')+'-proxy', true);
+                    return $http.post('/api/recheck')
+                    .then(function(r){
+                        if (r.data.login_failure)
+                            $window.location = '/';
+                    });
+                };
+                var is_not_ok_cb = function(res){
+                    $scope.status.type = 'danger';
+                    $scope.status.message = 'Error: '+res.data.status;
+                };
+                promise
+                    .then(function(){
+                        $scope.status.type = 'warning';
+                        $scope.status.message = 'Checking the proxy...';
+                        return $http.get('/api/proxy_status/'+proxy.port);
+                    })
+                    .then(function(res){
+                        if (res.data.status == 'ok')
+                            return is_ok_cb(res);
+                        return is_not_ok_cb(res);
+                    });
+            };
+            var url = '/api/proxy_check'+(edit ? '/'+$scope.port : '');
+            $http.post(url, proxy).then(function(res){
+                $scope.form_errors = {};
+                var warnings = [];
+                angular.forEach(res.data, function(item){
+                    if (item.lvl=='err')
+                        $scope.form_errors[item.field] = item.msg;
+                    if (item.lvl=='warn')
+                        warnings.push(item.msg);
+                });
+                if (Object.keys($scope.form_errors).length)
+                    return;
+                else if (warnings.length)
+                {
+                    $scope.$parent.$parent.$parent.$parent.confirmation = {
+                        text: 'Warning'+(warnings.length>1?'s':'')+':',
+                        items: warnings,
+                        confirmed: save_inner,
+                    };
+                    return $window.$('#confirmation').modal();
+                }
+                save_inner();
+            });
+        };
+        $scope.is_valid_field = function(name){
+            return is_valid_field($scope.form, name, $scope.consts.zone);
+        };
+        $scope.starts_with = function(actual, expected){
+            return actual.toLowerCase().startsWith(expected.toLowerCase());
+        };
+        $scope.update_regions_and_cities(true);
+    };
+}
+
+module.controller('columns', Columns);
+Columns.$inject = ['$scope', '$window'];
+function Columns($scope, $window){
+    $scope.init = function(locals){
+        $scope.columns = locals.columns;
+        $scope.form = _.cloneDeep(locals.cols_conf);
+        $scope.show_modal = function(){
+            $window.$('#proxy-cols').modal();
+        };
+        $scope.save = function(config){
+            $window.$('#proxy-cols').modal('hide');
+            $window.localStorage.setItem('columns', JSON.stringify(config));
+            for (var c in config)
+                locals.cols_conf[c] = config[c];
+        };
+        $scope.all = function(){
+            for (var c in $scope.columns)
+                $scope.form[$scope.columns[c].key] = true;
+        };
+        $scope.none = function(){
+            for (var c in $scope.columns)
+                $scope.form[$scope.columns[c].key] = false;
+        };
+        $scope.default = function(){
+            for (var c in $scope.columns)
+            {
+                $scope.form[$scope.columns[c].key] =
+                    locals.default_cols[$scope.columns[c].key];
+            }
         };
     };
 }
 
-module.filter('timestamp', timestampFilter);
-timestampFilter.$inject = [];
-function timestampFilter(){
+module.filter('timestamp', timestamp_filter);
+function timestamp_filter(){
     return function(timestamp){
         return moment(timestamp).format('YYYY/MM/DD HH:mm');
     };
 }
 
-module.filter('requests', requestsFilter);
-requestsFilter.$inject = ['$filter'];
-function requestsFilter($filter){
-    var numberFilter = $filter('number');
+module.filter('requests', requests_filter);
+requests_filter.$inject = ['$filter'];
+function requests_filter($filter){
+    var number_filter = $filter('number');
     return function(requests, precision){
-        if (requests==0 || isNaN(parseFloat(requests))
+        if (!requests || isNaN(parseFloat(requests))
             || !isFinite(requests))
         {
             return '';
         }
         if (typeof precision==='undefined')
             precision = 0;
-        return numberFilter(requests, precision);
+        return number_filter(requests, precision);
     };
 }
 
-module.filter('bytes', bytesFilter);
-bytesFilter.$inject = ['$filter'];
-function bytesFilter($filter){
-    var numberFilter = $filter('number');
+module.filter('bytes', bytes_filter);
+bytes_filter.$inject = ['$filter'];
+function bytes_filter($filter){
+    var number_filter = $filter('number');
     return function(bytes, precision){
-        if (bytes==0 || isNaN(parseFloat(bytes)) || !isFinite(bytes))
+        if (!bytes || isNaN(parseFloat(bytes)) || !isFinite(bytes))
             return '';
         var number = Math.floor(Math.log(bytes) / Math.log(1000));
         if (typeof precision==='undefined')
             precision = number ? 2 : 0;
-        return numberFilter(bytes / Math.pow(1000, Math.floor(number)),
+        return number_filter(bytes / Math.pow(1000, Math.floor(number)),
             precision)+' '+['B', 'KB', 'MB', 'GB', 'TB', 'PB'][number];
     };
 }
 
-module.filter('request', requestFilter);
-function requestFilter(){
+module.filter('request', request_filter);
+function request_filter(){
     return function(r){
         return '/tools?test='+encodeURIComponent(JSON.stringify({
             port: r.port,
             url: r.url,
             method: r.method,
             body: r.request_body,
-            headers: JSON.parse(r.request_headers),
+            headers: r.request_headers,
         }));
     };
 }
@@ -1543,16 +2374,14 @@ module.directive('initSelectOpen', ['$window', function($window){
         link: function(scope, element, attrs){
             setTimeout(function(){
                 element.focus();
-                var event = new $window.MouseEvent('mousedown');
-                element[0].dispatchEvent(event);
-            }, 0);
+            }, 100);
         },
     };
 }]);
 
-module.filter('shorten', shortenFilter);
-shortenFilter.$inject = ['$filter'];
-function shortenFilter($filter){
+module.filter('shorten', shorten_filter);
+shorten_filter.$inject = ['$filter'];
+function shorten_filter($filter){
     return function(s, chars){
         if (s.length<=chars+2)
             return s;
@@ -1561,55 +2390,5 @@ function shortenFilter($filter){
 }
 
 angular.bootstrap(document, ['app']);
-
-function chart_container(chart){
-    return document.getElementsByClassName('chart-'+chart)[0];
-}
-
-function chart_color(color){
-    var rgba = function(color, alpha){
-        return 'rgba('+color.concat(alpha).join(',')+')';
-    };
-    var hex = color.substr(1);
-    var int = parseInt(hex, 16);
-    var r = int>>16&255, g = int>>8&255, b = int&255;
-    color = [r, g, b];
-    return {
-        backgroundColor: rgba(color, 0.2),
-        pointBackgroundColor: rgba(color, 1),
-        pointHoverBackgroundColor: rgba(color, 0.8),
-        borderColor: rgba(color, 1),
-        pointBorderColor: '#fff',
-        pointHoverBorderColor: rgba(color, 1),
-    };
-}
-
-function chart_data(params){
-    return {
-        labels: params.labels,
-        datasets: params.data.map(function(item, i){
-            return angular.extend({
-                lineTension: 0,
-                data: item,
-                label: params.series[i],
-            }, chart_color(window.Chart.defaults.global.colors[i]));
-        }),
-    };
-}
-
-function chart_mousemove(type, $event, x_ar, t_ar, labels){
-    var rect = $event.currentTarget.getBoundingClientRect();
-    var width = rect.right-rect.left;
-    var x = $event.pageX;
-    x -= rect.left;
-    x -= window.pageXOffset;
-    x = Math.max(0, Math.min(width-1, x));
-    x_ar[type] = x;
-    t_ar[type] = x/width;
-}
-
-function chart_indicator(labels, p){
-    return labels[Math.round(p*(labels.length-1))];
-}
 
 });
