@@ -1,34 +1,6 @@
-<div ng-controller=settings>
-  <!--
-  <div ng-if=!status class="alert alert-info settings-alert">
-    <div>
-      Determining the status of your proxy...
-    </div>
-    <button type=button class="btn btn-danger" ng-click=shutdown()
-      ng-disabled=upgrading>
-      Shut down
-    </button>
-  </div>
-  -->
-  <!--
-  <div ng-if=status class="alert settings-alert" ng-class="{'alert-success':
-    status.status=='ok', 'alert-danger': status.status=='error'}">
-    <div>
-      {{status.description}}
-      <ul ng-if=status.description_list>
-        <li ng-repeat="item in status.description_list">
-          {{item}}
-        </li>
-      </ul>
-    </div>
-    <button type=button class="btn btn-danger" ng-click=shutdown()
-      ng-disabled=upgrading>
-      Shut down
-    </button>
-  </div>
-  -->
-  <!--
-  <div ng-if=$parent.$parent.settings.argv class="alert alert-info">
+<div ng-controller=settings id=settings-page>
+  <div class="alert alert-danger settings-alert" ng-if=user_error ng-bind-html=user_error.message></div>
+  <div ng-if="$root.mode=='root'&&$parent.$parent.settings.argv" class="alert alert-info">
     The application is running with the following arguments:
     <strong>
       <span ng-repeat="p in parse_arguments($parent.$parent.settings.argv)">
@@ -41,9 +13,8 @@
       </span>
     </strong>
   </div>
-  -->
-  <!--
-  <div ng-if=$parent.ver_node&&!$parent.ver_node.satisfied class="alert
+  <div
+    ng-if="$root.mode=='root'&&$parent.ver_node&&!$parent.ver_node.satisfied" class="alert
     alert-warning settings-alert">
     <div>
       The recommended version of node.js is
@@ -55,220 +26,60 @@
       using nvm, nave or visit <a href=https://nodejs.org>node.js</a> and
       download a newer version.
     </div>
-  </div>
-  -->
-  <!--
-  <div
-    ng-if=$parent.ver_cur&&$parent.ver_last&&$parent.ver_cur!=$parent.ver_last
-    class="alert alert-warning settings-alert">
     <div>
-      The latest version of the tool available is
-      <strong>{{$parent.ver_last}}</strong>. You are using
-      <strong>{{$parent.ver_cur}}</strong>. To upgrade, run the following
-      command:
+      After node upgrade you should uninstall and then reinstall this tool
+      using:
     </div>
-    <pre class=top-margin>$ npm install -g luminati-io/luminati-proxy</pre>
-    <div>
-      The source code of the Luminati proxy manager tool is available at
-      <a href=https://github.com/luminati-io/luminati-proxy>GitHub</a>.
-    </div>
-    <button type=button class="btn btn-primary" ng-click=upgrade()
-      ng-disabled=upgrading||upgrade_error>
-      Upgrade
-    </button>
-    <div class="alert alert-info settings-inner-alert" ng-if=upgrading>
-      Upgrading...
-    </div>
-    <div class="alert alert-danger settings-inner-alert" ng-if=upgrade_error>
-      Error
+    <pre class=top-margin>npm uninstall -g luminati-proxy</pre>
+    <pre class=top-margin>npm install -g luminati-io/luminati-proxy</pre>
+  </div>
+  <div class=row>
+    <div class="col-xs-12 text-center">
+      <h3>Login with your luminati.io credentials</h3>
     </div>
   </div>
-  -->
-  <!--
-  <div
-    ng-if=$parent.ver_cur&&$parent.ver_last&&$parent.ver_cur==$parent.ver_last
-    class="alert alert-success">
-    You are using the latest version of the Luminati proxy manager tool
-    (<strong>{{$parent.ver_cur}}</strong>).
-  </div>
-  -->
-  <!--
-  <form name=settings ng-submit=save()>
-    <div class=block>
-      <div class=form-group>
-        <label for=customer class=control-label>Customer/username</label>
-        <input type=text ng-required=true ng-model=$parent.settings.customer
-          class=form-control id=customer ng-blur=fix_username()>
-      </div>
-      <div class=form-group>
-        <label for=zone class=control-label>Default zone</label>
-        <input type=text ng-required=true ng-model=$parent.settings.zone
-          class=form-control id=zone>
-      </div>
-      <div class=form-group>
-        <label for=password class=control-label>Default password</label>
-        <input type=password ng-required=true
-          ng-model=$parent.settings.password class=form-control id=password>
-      </div>
-      <button type=submit class="btn btn-success"
-        ng-disabled=saving||!settings.$valid||settings.$pristine>
-        Save and restart
-      </button>
-      <div ng-if=saving class="alert alert-info alert-inline">
-        Saving...
-      </div>
-    </div>
-  </form>
-  -->
-  <div class="alert alert-info settings-alert" ng-if=$parent.settings.config>
-    <div>
-      Path to the configuration file:
-      <strong>{{$parent.$parent.settings.config}}</strong>
-    </div>
-    <!--
-    <button type=button class="btn btn-warning" ng-click=edit_config()>
-      Edit
-    </button>
-    -->
-  </div>
-  <!--
-  <div class="alert alert-warning settings-alert" ng-if=resolve_missing>
-    SOCKs is in use without IP resolution - HTTPS requests will not be served
-    from the proxy peer.
-  </div>
-  <div class="alert alert-info settings-alert" ng-if=resolve_auto>
-    IP resolution is done automatically.
-  </div>
-  <div class="alert alert-info settings-alert" ng-if=resolve_file>
-    <div>
-      Path to the IP resolution file:
-      <strong>{{$parent.$parent.settings.resolve}}</strong>
-    </div>
-    <button type=button class="btn btn-warning" ng-click=edit_resolve()>
-      Edit
-    </button>
-  </div>
-  -->
-  <div id=config class="modal fade" role=dialog>
-    <div class=modal-dialog>
-      <div class=modal-content>
-        <div class=modal-header>
-          <button type=button class=close data-dismiss=modal>
-            &times;
-          </button>
-          <button type=button class="btn btn-default btn-title"
-            ng-click=update_config()>
-            Update
-          </button>
-          <h4 class=modal-title>Configuration</h4>
+  <div class=row>
+    <div class="col-xs-offset-1 col-xs-10 col-sm-offset-2 col-sm-8
+      col-md-offset-3 col-md-6 col-lg-offset-4 col-lg-4 luminati-login">
+      <form ng-if="$root.mode=='root'" name=user ng-submit=save_user()>
+        <div id=google ng-hide="user_customers || google_login">
+          <a class=google ng-click=google_click($event)
+            href="https://accounts.google.com/o/oauth2/v2/auth?client_id=943425271003-8ibddns3o1ftp59t2su8c3psocph9v1d.apps.googleusercontent.com&response_type=code&redirect_uri=https%3A%2F%2Fluminati.io%2Fcp%2Flum_local_google&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email&prompt=select_account">
+            Log in with Google
+          </a>
         </div>
-        <div class=modal-body>
-          <textarea>{{config}}</textarea>
+        <div class=form-group ng-hide="user_customers || google_login"
+          ng-class="{'has-error': user_error&&user_error.username}">
+          <label for=username>Email</label>
+          <input type=email name=username id=username class=form-control
+            ng-model=user_data.username ng-disabled=user_customers>
         </div>
-        <div class=modal-footer>
-          <button type=button class="btn btn-default"
-            data-dismiss=modal>
-            Cancel
-          </button>
-          <button type=button class="btn btn-success"
-            data-dismiss=modal ng-click=save_config()>
-            Save and restart
-          </button>
+        <div class=form-group ng-hide="user_customers || google_login"
+          ng-class="{'has-error': user_error&&user_error.password}">
+          <label for=user_password>Password</label>
+          <input type=password name=password id=user_password
+            class=form-control ng-model=user_data.password
+            ng-disabled=user_customers>
         </div>
-      </div>
-    </div>
-  </div>
-  <div id=resolve class="modal fade" role=dialog>
-    <div class=modal-dialog>
-      <div class=modal-content>
-        <div class=modal-header>
-          <button type=button class=close data-dismiss=modal>
-            &times;
-          </button>
-          <h4 class=modal-title>IP Resolution</h4>
+        <div class="alert alert-info" ng-if=user_customers>
+          Please choose a customer.
         </div>
-        <div class=modal-body>
-          <textarea class=form-control ng-model=resolve.text></textarea>
+        <div class=form-group ng-if=user_customers>
+          <label for=user_customer>Customer</label>
+          <select id=user_customer ng-model=user_data.customer
+            class=form-control>
+            <option ng-repeat="c in user_customers" ng-value=c>{{c}}</option>
+          </select>
         </div>
-        <div class=form-group>
-          <button type=button class="btn btn-primary center-block"
-            ng-click=resolve_new()>
-            Add a host
-          </button>
+        <button type=submit class="btn btn-flat-blue btn-block"
+          ng-disabled=saving_user>
+          {{saving_user ? 'Logging in...' : 'Log in'}}
+        </button>
+        <div class=signup>
+          You do not have an account?
+          <a href="https://luminati.io/?need_signup=1" target=_blank>Sign up</a>
         </div>
-        <div class=modal-footer>
-          <button type=button class="btn btn-default"
-            data-dismiss=modal ng-click=update_resolve()>
-            Cancel
-          </button>
-          <button type=button class="btn btn-success"
-            data-dismiss=modal ng-click=save_resolve()>
-            Save and restart
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div id=resolve_add class="modal fade" role=dialog>
-    <div class=modal-dialog>
-      <div class=modal-content>
-        <form name=resolve_frm
-          ng-submit="resolve_add(); resolve_frm.$setPristine()">
-          <div class=modal-header>
-            <button type=button class=close data-dismiss=modal>
-              &times;
-            </button>
-            <h4 class=modal-title>Adding Host</h4>
-          </div>
-          <div class=modal-body>
-            <input type=text class=form-control placeholder=Host
-              ng-model=resolve_host.host ng-required=true>
-          </div>
-          <div class=modal-footer>
-            <div class="alert alert-danger alert-inline"
-              ng-if=resolve_error&&resolve_frm.$pristine>
-              The host could not be resolved
-            </div>
-            <button type=button class="btn btn-default" ng-if=!resolve_adding
-              data-dismiss=modal>
-              Cancel
-            </button>
-            <div class="alert alert-info alert-inline" ng-if=resolve_adding>
-              Resolving...
-            </div>
-            <button type=submit class="btn btn-success"
-              ng-disabled=!resolve_frm.$valid||resolve_frm.$pristine||resolve_adding>
-              Add
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  </div>
-  <div id=restarting class="modal fade" role=dialog>
-    <div class=modal-dialog>
-      <div class=modal-content>
-        <div class=modal-header>
-          <h4 class=modal-title>Restarting...</h4>
-        </div>
-        <div class=modal-body>
-          Please wait. The page will be reloaded automatically
-          once the application has restarted.
-        </div>
-      </div>
-    </div>
-  </div>
-  <div id=shutdown class="modal fade" role=dialog>
-    <div class=modal-dialog>
-      <div class=modal-content>
-        <div class=modal-header>
-          <h4 class=modal-title>Shutdown</h4>
-        </div>
-        <div class=modal-body>
-          The application has been shut down. To restart,
-          please run it manually and reload this page.
-        </div>
-      </div>
+      </form>
     </div>
   </div>
 </div>

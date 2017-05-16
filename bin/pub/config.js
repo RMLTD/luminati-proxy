@@ -11,16 +11,18 @@ var config = {
            '/req/bootstrap-datepicker/dist/js/bootstrap-datepicker.min',
         moment: '/req/moment/min/moment.min',
         angular: '/req/angular/angular.min',
-        'socket.io-client': '/socket.io/socket.io',
-        'angular-chart': '/req/angular-chart.js/dist/angular-chart.min',
-        chart: '/req/chart.js/dist/Chart.bundle.min', // with moment.js
+        'angular-sanitize': '/req/angular-sanitize/angular-sanitize.min',
         lodash: '/req/lodash/lodash.min',
         codemirror: '/req/codemirror',
+        'angular-ui-bootstrap': '/req/angular-ui-bootstrap/dist/ui-bootstrap',
+        'es6-shim': '/req/es6-shim/es6-shim',
+        hutil: '/req/hutil',
     },
     shim: {
         angular: {exports: 'angular'},
-        chart: {exports: 'Chart'},
         bootstrap: {deps: ['jquery']},
+        'angular-sanitize': {deps: ['angular']},
+        'angular-ui-bootstrap': {deps: ['angular']},
     },
     map: {
         '*': {

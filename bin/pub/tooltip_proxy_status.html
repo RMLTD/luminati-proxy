@@ -1,0 +1,18 @@
+<div>
+  <span ng-if="proxy._status=='error'" class=text-err>
+    The proxy is unavailable
+  </span>
+  <span ng-if="!proxy._status" class=text-warn>
+    Determining...
+  </span>
+  <span ng-if="proxy._status=='ok'&&proxy._status_details.length"
+    class=text-ok>
+    The proxy is available<br>
+    with warnings
+  </span>
+  <span ng-if="proxy._status=='ok'&&!proxy._status_details.length"
+    class=text-ok>
+    The proxy is available
+  </span>
+</div>
+
