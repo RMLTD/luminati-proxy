@@ -231,6 +231,7 @@ function Root($rootScope, $scope, $http, $window){
             function(){ setTimeout(check_reload, 500); })
         .then(function(){ $window.location.reload(); });
     };
+    /*
     $scope.is_upgradable = function(){
         if (!is_electron && $scope.ver_last && $scope.ver_last.newer)
         {
@@ -239,10 +240,14 @@ function Root($rootScope, $scope, $http, $window){
         }
         return false;
     };
+    */
+    /*
     $scope.dismiss_upgrade = function(){
         $window.localStorage.setItem('dismiss_upgrade',
             $scope.ver_last.version);
     };
+    */
+    /*
     $scope.upgrade = function(){
         $scope.confirmation = {
             text: 'The application will be upgraded and restarted.',
@@ -268,6 +273,8 @@ function Root($rootScope, $scope, $http, $window){
         };
         $window.$('#confirmation').modal();
     };
+    */
+    /*
     $scope.shutdown = function(){
         $scope.confirmation = {
             text: 'Are you sure you want to shut down the local proxies?',
@@ -289,6 +296,8 @@ function Root($rootScope, $scope, $http, $window){
                 .then(function(){ $window.location = '/'; });
         });
     };
+    */
+    /*
     $scope.warnings = function(){
         if (!$rootScope.run_config||!$rootScope.run_config.warnings)
             return [];
@@ -310,6 +319,7 @@ function Root($rootScope, $scope, $http, $window){
         $window.localStorage.setItem('suppressed_warnings',
             warnings.join('|||'));
     };
+    */
 }
 
 module.controller('config', Config);
@@ -333,6 +343,7 @@ function Config($scope, $http, $window){
             function(){ setTimeout(check_reload, 500); })
         .then(function(){ $window.location.reload(); });
     };
+    /*
     $scope.save = function(){
         $scope.errors = null;
         $http.post('/api/config_check', {config: $scope.codemirror.getValue()})
@@ -354,12 +365,15 @@ function Config($scope, $http, $window){
             $window.$('#confirmation').modal();
         });
     };
+    */
+    /*
     $scope.update = function(){
         $http.get('/api/config').then(function(config){
             $scope.config = config.data.config;
             $scope.codemirror.setValue($scope.config);
         });
     };
+    */
     $window.$('#config-panel')
     .on('hidden.bs.collapse', $scope.update)
     .on('show.bs.collapse', function(){
@@ -409,6 +423,7 @@ function Resolve($scope, $http, $window){
     $scope.cancel = function(){
         $window.$('#resolve-panel > .collapse').collapse('hide');
     };
+    /*
     $scope.new_host = function(){
         $window.$('#resolve_add').one('shown.bs.modal', function(){
             $window.$('#resolve_add input').select();
@@ -437,6 +452,7 @@ function Resolve($scope, $http, $window){
                 $scope.error = true;
         });
     };
+    */
 }
 
 module.controller('settings', Settings);
@@ -480,6 +496,7 @@ function Settings($scope, $http, $window, $sce, $rootScope){
     };
     $scope.user_data = {username: '', password: ''};
     var token;
+    /*
     $scope.save_user = function(){
         var creds = {};
         if (token)
@@ -521,6 +538,7 @@ function Settings($scope, $http, $window, $sce, $rootScope){
             $scope.user_error = error.data.error;
         });
     };
+    */
     $scope.google_click = function(e){
         var google = $window.$(e.currentTarget), l = $window.location;
         google.attr('href', google.attr('href')+'&state='+encodeURIComponent(
@@ -1220,7 +1238,7 @@ function Proxies($scope, $http, $proxies, $window, $q, $timeout){
     $scope.zones = {};
     $scope.selected_proxies = {};
     $scope.showed_status_proxies = {};
-    $scope.pagination = {page: 1, per_page: 10};
+    $scope.pagination = {page: 1, per_page: 100};
     $scope.set_page = function(){
         var page = $scope.pagination.page;
         var per_page = $scope.pagination.per_page;
@@ -1238,6 +1256,7 @@ function Proxies($scope, $http, $proxies, $window, $q, $timeout){
                 $scope.showed_status_proxies[p.port]&&p._status_details.length;
         });
     });
+    /*
     $scope.delete_proxies = function(){
         $scope.$parent.$parent.confirmation = {
             text: 'Are you sure you want to delete the proxy?',
@@ -1255,6 +1274,7 @@ function Proxies($scope, $http, $proxies, $window, $q, $timeout){
         };
         $window.$('#confirmation').modal();
     };
+    */
     $scope.refresh_sessions = function(proxy){
         $http.post('/api/refresh_sessions/'+proxy.port)
         .then(function(){ return $proxies.update(); });
@@ -1269,6 +1289,7 @@ function Proxies($scope, $http, $proxies, $window, $q, $timeout){
             pool_size: proxy.pool_size,
         }];
     };
+    /*
     $scope.add_proxy = function(){
         $scope.proxy_dialog = [{proxy: {}}];
     };
@@ -1277,6 +1298,7 @@ function Proxies($scope, $http, $proxies, $window, $q, $timeout){
         var proxy = $scope.proxies.filter(function(p){ return p.port==port; });
         $scope.proxy_dialog = [{proxy: proxy[0].config, duplicate: duplicate}];
     };
+    */
     $scope.edit_cols = function(){
         $scope.columns_dialog = [{
             columns: opt_columns.filter(function(col){
@@ -1286,6 +1308,7 @@ function Proxies($scope, $http, $proxies, $window, $q, $timeout){
             default_cols: default_cols,
         }];
     };
+    /*
     $scope.inline_edit_click = function(proxy, col){
         if (proxy.proxy_type!='persist'
             || !$scope.is_valid_field(proxy, col.key))
@@ -1307,6 +1330,8 @@ function Proxies($scope, $http, $proxies, $window, $q, $timeout){
             break;
         }
     };
+    */
+    /*
     $scope.inline_edit_input = function(proxy, col, event){
         if (event.which==27)
             return $scope.inline_edit_blur(proxy, col);
@@ -1370,6 +1395,7 @@ function Proxies($scope, $http, $proxies, $window, $q, $timeout){
         if (col.key=='session'&&proxy.config.session===true)
             proxy.config.session='';
     };
+    */
     $scope.get_selected_proxies = function(){
         return Object.keys($scope.selected_proxies)
             .filter(function(p){ return $scope.selected_proxies[p]; })
@@ -2171,6 +2197,7 @@ function Proxy($scope, $http, $proxies, $window, $q){
                 $scope.form.state = city.region;
             $scope.update_cities();
         };
+        /*
         $scope.save = function(model){
             var proxy = angular.copy(model);
             delete proxy.preset;
@@ -2276,6 +2303,7 @@ function Proxy($scope, $http, $proxies, $window, $q){
                 save_inner();
             });
         };
+        */
         $scope.is_valid_field = function(name){
             return is_valid_field($scope.form, name, $scope.consts.zone);
         };

@@ -5,7 +5,7 @@
     Dismiss
   </button>
 </div>
-<ng-include src="'/upgrade.html'"></ng-include>
+<!--<ng-include src="'/upgrade.html'"></ng-include>-->
 <div class="alert alert-info settings-alert"
   ng-if="$root.mode=='root'&&$parent.settings.resolve===true">
   IP resolution is done automatically.
@@ -16,6 +16,7 @@
   </div>
   <div ng-if=proxies class="panel panel-default proxies">
     <div class=panel-heading>
+      <!--
       <button ng-if="$root.mode!='guest'"
         ng-disabled="!is_action_available('edit')"
         ng-click="edit_proxy()"
@@ -23,6 +24,8 @@
         type=button class="btn btn-ico">
         <img src=/img/ic_edit.svg>
       </button>
+      -->
+      <!--
       <button ng-if="$root.mode!='guest'"
         ng-disabled="!is_action_available('duplicate')"
         uib-tooltip="Duplicate Proxy" tooltip-class=tooltip-default
@@ -30,12 +33,16 @@
         type=button class="btn btn-ico">
         <img src=/img/ic_dup.svg>
       </button>
+      -->
+      <!--
       <button type=button class="btn btn-ico"
         ng-if="$root.mode!='guest'" ng-click=delete_proxies()
         ng-disabled="!is_action_available('delete')"
         uib-tooltip=Delete tooltip-class=tooltip-default>
         <img src=/img/ic_delete.svg>
       </button>
+      -->
+      <!--
       <div class=btn-wrapper>
         <button type=button class="btn btn-ico" ng-click=edit_cols()
           uib-tooltip="Edit Columns" tooltip-class=tooltip-default>
@@ -47,6 +54,7 @@
           <img src=/img/ic_plus.svg>
         </button>
       </div>
+      -->
     </div>
     <div class="panel-body proxies-panel" ng-show="columns">
       <table class="table table-hover proxies">
